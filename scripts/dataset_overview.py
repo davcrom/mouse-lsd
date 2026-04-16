@@ -8,7 +8,7 @@ from iblatlas.atlas import AllenAtlas
 import iblatlas.plots as anatomyplots
 
 from psyfun.config import *
-from psyfun.atlas import coarse_regions
+from psyfun.atlas import region_parcellation
 from psyfun.plots import cm2in, qc_grid, set_plotsize, clip_axes_to_ticks
 
 df_sessions = pd.read_parquet(paths['sessions'])
@@ -84,7 +84,7 @@ df_units = df_units[[
     col for col in df_units.columns if
     not col.endswith('_x') or col.endswith('_y')
     ]]
-df_units['coarse_region'] = coarse_regions(df_units['region'])
+df_units['coarse_region'] = region_parcellation(df_units['region'])
 
 
 # Get number of unit per coarse region recorded in the LSD condition (sorted)

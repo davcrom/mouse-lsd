@@ -33,7 +33,7 @@ qc_datasets = {
         'raw_task_data_00/_iblrig_stimPositionScreen.raw.csv'
         'alf/task_00/_ibl_passivePeriods.intervalsTable.csv',
         'raw_task_data_01/_iblrig_taskSettings.raw.json',
-        'raw_task_data_01/_iblrig_stimPositionScreen.raw.csv'
+        'raw_task_data_01/_iblrig_stimPositionScreen.raw.csv',
         'alf/task_01/_ibl_passivePeriods.intervalsTable.csv',
         'raw_task_data_02/_iblrig_taskSettings.raw.json',
         'raw_task_data_02/_iblrig_stimPositionScreen.raw.csv'
@@ -85,8 +85,6 @@ TASKTIMINGS = [
     'task01_rfm_start', 'task01_rfm_stop',
     'task01_replay_start', 'task01_replay_stop'
     ]
-
-bwm_pretask_length = 5 * 60  # seconds
 
 postLSD_epoch_length = 5 * 60  # seconds
 postLSD_epoch_starts = np.arange(0, 30, 10) * 60  # seconds

@@ -1,4 +1,5 @@
 import os
+from functools import lru_cache
 import numpy as np
 import pandas as pd
 from datetime import datetime
@@ -11,7 +12,8 @@ from brainbox.io.one import SpikeSortingLoader
 from iblatlas.atlas import AllenAtlas
 atlas = AllenAtlas()
 
-from .config import *
+from psyfun.atlas import region_parcellation
+from psyfun.config import paths, df_controls, TASKTIMINGS
 
 
 def fetch_sessions(one, save=True, qc=False):
@@ -169,10 +171,10 @@ def _fetch_protocol_timings(series, one=None):
         # FIXME: handle spontaneous protocol in 2025 recordings more gracefully!
         if 'spontaneous' in protocol:
             # Check for one session where LSD admin was delayed by ~40min
-            if series['eid'] != '4b874c49-3c0c-4f30-9b1f-74c9dbfb57c8':
-                # Assume LSD was given at start of spontaneous period
-                series['LSD_admin'] = (spontaneous_start - session_start).seconds
-            continue
+            if series['eid'] == '4b874c49-3c0c-4f30-9b1f-74c9dbfb57c8':
+                continue
+            # Assume LSD was given at start of spontaneous period
+            series['LSD_admin'] = (spontaneous_start - session_start).seconds
         # Get gabor patch presentation timings for task replay epoch
         df_gabor = one.load_dataset(series['eid'], '_iblrig_stimPositionScreen.raw.csv', collection)
         # first stimulus becomes the header, so we need to pull it out
@@ -454,39 +456,57 @@ def load_spikes(uuids):
     return pd.DataFrame(units).set_index('uuid')
 
 
-def load_sessions():
-    return pd.read_parquet(paths['sessions'])
+def load_sessions(drop_if_nan=TASKTIMINGS, drop_extra_columns=True):
+    """
+    Convenience function to load sessions data frame.
+
+    Parameters
+    ----------
+    drop_if_nan : list
+        List of columns. Session is dropped if any column from the list is NaN.
+        Defaults to task timing columns.
+    drop_extra_columns : bool
+        If True, drop QC and dataset columns.
+    """
+    df_sessions = pd.read_parquet(paths['sessions'])
+    print(f"Total sessions: {len(df_sessions)}")
+    # Remove sessions missing timing information for important experimental epochs
+    df_sessions = df_sessions.dropna(subset=drop_if_nan)
+    print(f"Valid sessions: {len(df_sessions)}")
+
+    if drop_extra_columns:
+        columns_to_keep = TASKTIMINGS + [
+            'subject', 'eid', 'start_time', 'session_n', 'control_recording'
+            ]
+        df_sessions = df_sessions[columns_to_keep].copy()
+
+    return df_sessions
 
 
 def load_units(add_coarse_regions=True):
-    return pd.read_parquet(paths['units'])  # unit info
+    """Convenience function to load units data frame."""
+    df_units = pd.read_parquet(paths['units'])
+    if add_coarse_regions:
+        df_units['coarse_region'] = region_parcellation(df_units['region'])
+    return df_units
 
 
-def load_session_spikes(
-    session_filter=TASKTIMINGS,
-    unit_filter='ks2_label == "good"'
-    ):
+def load_session_spikes():
     """
-    # unit_filter = 'ks2_label == "good"'  # kilosort label for well-isolated units, as opposed to multi-unit activity (mua)
-    # unit_filter = 'label == 1.0'  # more conservative IBL quality criterion
-    # Additional filters can be constructed using any column of the unit metadata
+    Convenience functions to load spike times and unit into for analyzable sessions.
     """
     # Load sessions
     df_sessions = load_sessions()  # session info
-    print(f"Total sessions: {len(df_sessions)}")
-    # Remove sessions missing timing information for important experimental epochs
-    df_sessions = df_sessions.dropna(subset=session_filter)
-    # Get eids for remaining sessions
     eids = df_sessions['eid'].tolist()
-    print(f"Valid sessions: {len(df_sessions)}")
 
     # Load units
     df_units = load_units()  # unit info
     df_units = df_units.query('eid in @eids')
     print(f"Total units in valid sessions: {len(df_units)}")
     # Remove low-quality units
-    df_units = df_units.query(unit_filter)
-    print(f"Good units in valid sessions: {len(df_units)}")
+    if unit_filter:
+        df_units = df_units.query(unit_filter)
+        print(f"Good units in valid sessions: {len(df_units)}")
 
     # Load spike times
     print("Loading spike times...")
@@ -495,52 +515,8 @@ def load_session_spikes(
     df_spikes = df_units.set_index('uuid').join(df_spiketimes).reset_index()
     # Merge session info into spikes dataframe
     df_spikes = pd.merge(
-        df_spikes, df_sessions, on=['subject', 'eid', 'session_n'], how='left'
+        df_spikes, df_sessions, on=['subject', 'eid'], how='left'
         )
-
-    # Remove units missing timing information
-    ## TODO: look into how this can happen!!
-    n_before = len(df_spikes)
-    df_spikes = df_spikes.dropna(subset=session_filter)
-    n_after = len(df_spikes)
-    if n_before > n_after:
-        print(f"Removed {n_before - n_after} units with missing timing info")
-    print(f"Final units with valid timings: {n_after}")
 
     return df_spikes
 
-
-def fetch_BWM_task_starts(one, save=True):
-    # All BWM ephys sessions
-    eids = np.array(one.search(project='brainwide', task_protocol='ephys'))
-    # Collect timing of trial starts
-    task_starts = np.full(len(eids), np.nan)
-    for i, eid in tqdm(enumerate(eids), total=len(eids)):
-        try:
-            df_trials = one.load_dataset(eid, dataset='_ibl_trials.table')
-            task_starts[i] = df_trials.loc[0, 'intervals_0']  # start of first trial
-        except:  # if session is missing trials.table
-            continue
-    df = pd.DataFrame({'eid': eids, 'task_start': task_starts})
-    if save:
-        df.to_csv('metadata/BWM_task_starts.csv', index=False)
-    return df
-
-
-def fetch_BWM_insertions(one, df_controls, save=True):
-    pids = np.concatenate([one.eid2pid(eid)[0] for eid in df_controls['eid']])
-    insertions = [one.alyx.rest('insertions', 'list', id=pid)[0] for pid in pids]
-    df_insertions = pd.DataFrame(insertions).rename(columns={'id': 'pid', 'session': 'eid', 'name':'probe'})
-    # Pull out some basic fields from the session info dict
-    df_insertions = df_insertions.progress_apply(_unpack_session_info, axis='columns')
-    # Unpack detailed QC info from the json
-    df_insertions = df_insertions.progress_apply(_unpack_json, axis='columns')
-    # Add any histology QC info present
-    df_insertions = df_insertions.progress_apply(_check_histology, one=one, axis='columns')
-    # Label and sort by session number for each subject
-    df_insertions['session_n'] = df_insertions.groupby('subject')['start_time'].rank(method='dense').astype(int)
-    df_insertions = df_insertions.sort_values(by=['subject', 'start_time']).reset_index(drop=True)
-    # Save as csv
-    if save:
-        df_insertions.to_parquet(paths['BWM_insertions'], index=False)
-    return df_insertions

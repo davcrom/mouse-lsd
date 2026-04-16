@@ -20,7 +20,7 @@ from psyfun import io, util, atlas, spikes, plots
 from psyfun.config import *
 
 df_spikes = io.load_session_spikes()
-df_spikes['coarse_region'] = atlas.coarse_regions(df_spikes['region'])
+df_spikes['coarse_region'] = atlas.region_parcellation(df_spikes['region'])
 
 df_spikes['full_start'] = df_spikes[
     [col for col in df_spikes.columns if '_start' in col]

@@ -32,7 +32,7 @@ binned_metrics = {
 
 
 df_spikes = io.load_session_spikes().set_index('uuid')
-df_spikes['coarse_region'] = atlas.coarse_regions(df_spikes['region'])
+df_spikes['coarse_region'] = atlas.region_parcellation(df_spikes['region'])
 
 
 epoch_dfs = []
