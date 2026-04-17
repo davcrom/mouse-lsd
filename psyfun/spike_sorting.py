@@ -128,18 +128,31 @@ class SpikeSortingQC():
         return waveforms, channels
 
 
+    def set_bombcell_param(self, **kwargs):
+        param = bombcell.get_default_parameters(
+            kilosort_path=self.spike_sorting_dir,
+            kilosort_version=''  # '4' if KS4, else anything
+        )
+
+        param.update(kwargs)
+
+        self.bombcell_param = param
+
+        return param
+
+
     def run_bombcell(self, suppress_figures=True) -> pd.DataFrame:
         print("Preparing bombcell...")
         self.bombcell_dir = self.spike_sorting_dir / 'bombcell'
         if os.path.exists(self.bombcell_dir):
             print("Deleting previous bombcell output...")
             shutil.rmtree(self.bombcell_dir)
-        os.mkdir(self.spike_sorting_dir / 'bombcell')
+        os.mkdir(self.bombcell_dir)
 
-        param = bombcell.get_default_parameters(
-            kilosort_path=self.spike_sorting_dir,
-            kilosort_version=''  # '4' if KS4, else anything
-        )
+        if not hasattr(self, 'bombcell_param'):
+            param = self.set_bombcell_param()
+        else:
+            param = self.bombcell_param
 
         print("Running bombcell...")
         quality_metrics, param, unit_type, unit_type_string = bombcell.run_bombcell(
@@ -156,7 +169,7 @@ class SpikeSortingQC():
         bombcell_results = pd.DataFrame.from_dict(quality_metrics)
         bombcell_results['label'] = unit_type_string
 
-        self.bombcell_param = param
+        self.bombcell_param = param  # in case the run updated anything
         self.bombcell_results = bombcell_results
 
         return bombcell_results
