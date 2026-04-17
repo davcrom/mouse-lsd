@@ -23,7 +23,7 @@ class SpikeSortingQC():
 
         # Try to see if KS output is already downloaded and extracted
         sorter = self._get_sorter()
-        self.spike_sorting_dir = one.eid2path(self.eid) / f'spike_sorters/{probe}/{sorter}'
+        self.spike_sorting_dir = one.eid2path(self.eid) / f'spike_sorters/{sorter}/{probe}'
         # Pick a random KS output file to check for
         sorting_extracted = (self.spike_sorting_dir / 'amplitudes.npy').exists()
 
@@ -48,6 +48,7 @@ class SpikeSortingQC():
             sorter = 'pykilosort'
         else:
             sorter = None
+        return sorter
 
 
     def download_spike_sorting(self):
