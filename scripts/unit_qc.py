@@ -21,7 +21,7 @@ if __name__ == '__main__':
         ssqc.run_bombcell()
         ssqc.set_uuid_map(probe_units)
         save_duplicate_masks(ssqc.get_duplicate_masks(), paths['spikes'])
-        all_results.append(bombcell_results)
+        all_results.append(ssqc.get_bombcell_with_uuids())
         ssqc.remove_spike_sorting()
 
     df_bombcell = pd.concat(all_results, ignore_index=True)

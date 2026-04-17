@@ -255,6 +255,19 @@ class SpikeSortingQC():
         return self.uuid_map
 
 
+    def get_bombcell_with_uuids(self) -> pd.DataFrame:
+        """Return `bombcell_results` merged with `uuid_map` on `phy_clusterID`."""
+        if not hasattr(self, 'bombcell_results'):
+            raise RuntimeError(
+                "bombcell_results must be set; call run_bombcell or load_bombcell first"
+            )
+        if not hasattr(self, 'uuid_map'):
+            raise RuntimeError("set_uuid_map must be run before get_bombcell_with_uuids")
+        return self.bombcell_results.merge(
+            self.uuid_map, on='phy_clusterID', how='inner', validate='one_to_one'
+        )
+
+
     def get_duplicate_masks(self) -> dict:
         """Return per-uuid bool masks marking bombcell duplicate spikes.
 
