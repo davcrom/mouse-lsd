@@ -20,6 +20,7 @@ paths = {
     'insertions': PROJECT_ROOT / Path('metadata/insertions.pqt'),
     'trajectories': PROJECT_ROOT / Path('metadata/trajectories.csv'),
     'units': PROJECT_ROOT / Path('data/units.pqt'),
+    'bombcell': PROJECT_ROOT / Path('data/bombcell.pqt'),
     'spikes': PROJECT_ROOT / Path('data/spikes.h5'),
     'BWM_insertions': PROJECT_ROOT / Path('metadata/BWM_insertions.pqt'),
     'BWM_units': PROJECT_ROOT / Path('data/BWM_units.pqt'),
