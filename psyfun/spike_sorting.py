@@ -128,7 +128,7 @@ class SpikeSortingQC():
         return waveforms, channels
 
 
-    def run_bombcell(self) -> pd.DataFrame:
+    def run_bombcell(self, suppress_figures=True) -> pd.DataFrame:
         print("Preparing bombcell...")
         self.bombcell_dir = self.spike_sorting_dir / 'bombcell'
         if os.path.exists(self.bombcell_dir):
@@ -148,9 +148,10 @@ class SpikeSortingQC():
             param=param,
             save_figures=True
         )
-
-        plt.close('all')
         print(f"    results saved to {self.bombcell_dir}")
+
+        if suppress_figures:
+            plt.close('all')
 
         bombcell_results = pd.DataFrame.from_dict(quality_metrics)
         bombcell_results['label'] = unit_type_string
