@@ -43,6 +43,8 @@ class SpikeSortingQC():
             self.spike_sorting_dir = self.spike_sorting_filepath.parent
             self.extract_spike_sorting()
 
+        self.bombcell_dir = self.spike_sorting_dir / 'bombcell'
+
 
     def _get_sorter(self):
         collections = self.one.list_collections(self.eid)
@@ -143,7 +145,6 @@ class SpikeSortingQC():
 
     def run_bombcell(self, suppress_figures=True) -> pd.DataFrame:
         print("Preparing bombcell...")
-        self.bombcell_dir = self.spike_sorting_dir / 'bombcell'
         if os.path.exists(self.bombcell_dir):
             print("Deleting previous bombcell output...")
             shutil.rmtree(self.bombcell_dir)
@@ -167,12 +168,34 @@ class SpikeSortingQC():
             plt.close('all')
 
         bombcell_results = pd.DataFrame.from_dict(quality_metrics)
-        bombcell_results['label'] = unit_type_string
+        bombcell_results['bc_unitType'] = unit_type_string
 
         self.bombcell_param = param  # in case the run updated anything
         self.bombcell_results = bombcell_results
 
         return bombcell_results
+
+
+    def load_bombcell(self) -> pd.DataFrame:
+        """Populate `bombcell_param` and `bombcell_results` from saved parquet."""
+        param, quality_metrics, _ = bombcell.load_bc_results(self.bombcell_dir)
+        self.bombcell_param = param
+        self.bombcell_results = quality_metrics
+        return self.bombcell_results
+
+
+    def bombcell_gui(self):
+        if not hasattr(self, 'bombcell_param') or not hasattr(self, 'bombcell_results'):
+            raise RuntimeError(
+                "bombcell_param and bombcell_results must be set; "
+                "call run_bombcell or load_bombcell first"
+            )
+        bombcell.unit_quality_gui(
+            ks_dir=self.spike_sorting_dir,
+            save_path=self.bombcell_dir,
+            param=self.bombcell_param,
+            quality_metrics=self.bombcell_results,
+        )
 
 
     def compare_labels(self, probe_units: pd.DataFrame):
@@ -194,8 +217,8 @@ class SpikeSortingQC():
             'ks2': probe_units['ks2_label'].to_numpy(),
             'ibl': ibl_cats,
         }).merge(
-            self.bombcell_results[['phy_clusterID', 'label']].rename(
-                columns={'phy_clusterID': 'cluster_id', 'label': 'bombcell'}
+            self.bombcell_results[['phy_clusterID', 'bc_unitType']].rename(
+                columns={'phy_clusterID': 'cluster_id', 'bc_unitType': 'bombcell'}
             ),
             on='cluster_id',
             how='inner',
