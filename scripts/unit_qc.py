@@ -11,7 +11,7 @@ import bombcell
 from one.api import ONE
 from one.alf.exceptions import ALFObjectNotFound
 
-from psyfun.config import paths
+from psyfun.config import paths, CMAPS
 from psyfun.io import load_units
 
 class SpikeSortingQC():
@@ -149,6 +149,54 @@ class SpikeSortingQC():
         self.bombcell_results = bombcell_results
 
         return bombcell_results
+
+
+    def compare_labels(self, probe_units: pd.DataFrame):
+        """Cross-compare bombcell, IBL, and Kilosort2 unit labels.
+
+        Produces a 3x2 grid of stacked bar charts: each row uses one label
+        source as the grouping axis and stacks the composition of the other
+        two sources within each group.
+        """
+        ibl_map = {0.0: 'fail', 1/3: 'critical', 2/3: 'warning', 1.0: 'pass'}
+        ibl_cats = pd.Categorical(
+            probe_units['label'].map(ibl_map),
+            categories=['fail', 'critical', 'warning', 'pass'],
+            ordered=True,
+        )
+        labels = pd.DataFrame({
+            'uuid': probe_units['uuid'].to_numpy(),
+            'cluster_id': probe_units['cluster_id'].to_numpy(),
+            'ks2': probe_units['ks2_label'].to_numpy(),
+            'ibl': ibl_cats,
+        }).merge(
+            self.bombcell_results[['phy_clusterID', 'label']].rename(
+                columns={'phy_clusterID': 'cluster_id', 'label': 'bombcell'}
+            ),
+            on='cluster_id',
+            how='inner',
+            validate='one_to_one',
+        )
+
+        sources = ['bombcell', 'ibl', 'ks2']
+        all_cats = {s: sorted(labels[s].dropna().unique().tolist()) for s in sources}
+        all_cats['ibl'] = list(labels['ibl'].cat.categories)  # keep full IBL tier set
+        fig, axes = plt.subplots(3, 2, figsize=(9, 9), constrained_layout=True)
+        for i, group_by in enumerate(sources):
+            others = [s for s in sources if s != group_by]
+            for j, other in enumerate(others):
+                ct = pd.crosstab(labels[group_by], labels[other]).reindex(
+                    index=all_cats[group_by],
+                    columns=all_cats[other],
+                    fill_value=0,
+                )
+                ct.plot.bar(stacked=True, ax=axes[i, j], width=0.8, colormap=CMAPS['qc'])
+                axes[i, j].set_xlabel(group_by)
+                axes[i, j].set_ylabel('n units')
+                axes[i, j].legend(title=other, fontsize=8)
+                axes[i, j].tick_params(axis='x', rotation=0)
+        fig.suptitle(f"Label comparison — {self.eid} / {self.probe}")
+        return fig, labels
 
 
     def attach_uuid(self, probe_units: pd.DataFrame) -> pd.DataFrame:
