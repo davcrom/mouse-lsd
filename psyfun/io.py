@@ -394,12 +394,12 @@ class PsySpikeSortingLoader(SpikeSortingLoader):
         return clusters
 
 
-def fetch_unit_info(one, df_insertions, uinfo_file='', spike_file='', atlas=atlas, histology=None):
+def fetch_unit_info(one, df_insertions, uinfo_file='', spike_file='', atlas=atlas):
     probe_dfs = []
     for idx, probe in tqdm(df_insertions.iterrows(), total=len(df_insertions)):
         # Load in spike times and cluster info
         pid = probe['pid']
-        loader = PsySpikeSortingLoader(pid=pid, one=one, atlas=atlas, histology=histology)
+        loader = PsySpikeSortingLoader(pid=pid, one=one, atlas=atlas)
         try:
             clusters = loader.load_spike_sorting_object('clusters')
             channels = loader.load_channels()

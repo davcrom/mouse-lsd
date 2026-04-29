@@ -75,7 +75,6 @@ if args.fetch_uinfo or args.fetch_spikes:
         df_insertions,
         uinfo_file=paths['units'],
         spike_file=spike_file,
-        histology='traced'
         )
 
 
