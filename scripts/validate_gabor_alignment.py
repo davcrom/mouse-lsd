@@ -4,16 +4,18 @@ Validate `metadata/sessions.pqt` task-epoch timings against local spike data.
 For every session in `paths['sessions']` that has spike data in `paths['spikes']`,
 build a depth-binned z-scored PSTH around each passive task's replay window.
 
-Per task panel, gabor onsets come from one of two sources:
+Event sources by `--event`:
 
-1. `alf/task_NN/_ibl_passiveGabor.table.csv` (FPGA-aligned, ground truth)
-   when the IBL extractor produced it.
-
-2. `raw_task_data_NN/_iblrig_stimPositionScreen.raw.csv` (rig wall-clock)
-   converted to FPGA seconds via `anchor.spontaneous_start +
-   (gabor_rig_clock - anchor.SESSION_DATETIME)`, where `anchor` is the
-   first passive on the same session that *does* have alf intervals.
-   This tests the fixed-delta fallback used in `psyfun.io._fetch_protocol_timings`.
+* `noise` / `valve`: `alf/task_NN/_ibl_passiveStims.table.csv` column
+  `noiseOn` / `valveOn`. No fallback — panels without the alf table show
+  "no events".
+* `gabor`: `alf/task_NN/_ibl_passiveGabor.table.csv` when the IBL extractor
+  produced it, otherwise `raw_task_data_NN/_iblrig_stimPositionScreen.raw.csv`
+  (rig wall-clock) converted to FPGA seconds via
+  `anchor.spontaneous_start + (gabor_rig_clock - anchor.SESSION_DATETIME)`,
+  where `anchor` is the first passive on the same session that *does* have
+  alf intervals. This tests the fixed-delta fallback used in
+  `psyfun.io._fetch_protocol_timings`.
 
 Each PNG is one session. Per panel: heatmap (depth x time z-score), source
 of timings in the title, response stats in a corner box, vertical line at
@@ -21,7 +23,8 @@ peak time, red ticks on the depth axis marking significant bins.
 
 Usage:
     python scripts/validate_gabor_alignment.py
-    python scripts/validate_gabor_alignment.py --baseline median
+    python scripts/validate_gabor_alignment.py --event valve
+    python scripts/validate_gabor_alignment.py --event gabor --baseline median
 """
 
 import argparse
@@ -205,14 +208,22 @@ def _parse_iblrig_datetime(dt_str: str) -> datetime:
 
 def events_for_task(
     eid: str, task_idx: int, collections: list[dict],
-    anchor: tuple[float, datetime, str] | None, one: ONE,
+    anchor: tuple[float, datetime, str] | None, one: ONE, event: str,
 ) -> tuple[np.ndarray | None, str]:
     """Return (events_FPGA, source_label) for the i-th passive collection."""
     passives = [c for c in collections if c["kind"] == "passive"]
     if task_idx >= len(passives):
         return None, f"no passive #{task_idx}"
     target = passives[task_idx]
-    # Prefer alf gabor table.
+    if event in ("noise", "valve"):
+        col = f"{event}On"
+        try:
+            stims = one.load_dataset(eid, "_ibl_passiveStims.table.csv", target["alf"])
+        except ALFObjectNotFound:
+            return None, f"no _ibl_passiveStims.table.csv in {target['alf']}"
+        events_arr = stims[col].dropna().to_numpy(dtype=np.float64)
+        return events_arr, f"alf ({target['alf']}:{col})"
+    # event == 'gabor': prefer alf gabor table.
     try:
         gabor = one.load_dataset(eid, "_ibl_passiveGabor.table.csv", target["alf"])
         events = gabor.loc[gabor["contrast"] > CONTRAST_THRESH, "start"].to_numpy(dtype=np.float64)
@@ -253,7 +264,7 @@ def events_for_task(
 def render_panel(
     ax: plt.Axes, task_idx: int, source: str, events: np.ndarray | None,
     binned: np.ndarray, t_edges: np.ndarray, d_edges: np.ndarray,
-    saved_window: tuple[float, float] | None, baseline: str,
+    saved_window: tuple[float, float] | None, baseline: str, event: str,
 ) -> None:
     title_top = f"task{task_idx:02d}"
     if events is None or len(events) == 0:
@@ -285,7 +296,7 @@ def render_panel(
         ax.scatter(np.full(len(sig_depths), centers[-1]), sig_depths,
                    marker="|", s=18, color="red", clip_on=False)
     ax.set_title(f"{title_top}    source: {source}", fontsize=9, loc="left")
-    ax.set_xlabel("time from gabor onset (s)")
+    ax.set_xlabel(f"time from {event} onset (s)")
     ax.set_ylabel("depth on probe (um)")
     # Stats annotation in upper-left.
     txt = (f"n events: {len(events)} (in saved window: {n_in_window})\n"
@@ -300,26 +311,31 @@ def render_panel(
 
 def make_session_figure(
     label: str, eid: str, panels: list[dict], d_edges: np.ndarray, baseline: str,
+    event: str,
 ) -> plt.Figure:
     fig, axes = plt.subplots(1, 2, figsize=(13, 6), squeeze=False)
     last_im = None
     for j, p in enumerate(panels):
         im = render_panel(
             axes[0, j], p["task_idx"], p["source"], p["events"],
-            p["binned"], p["t_edges"], d_edges, p["saved_window"], baseline,
+            p["binned"], p["t_edges"], d_edges, p["saved_window"], baseline, event,
         )
         if im is not None:
             last_im = im
     if last_im is not None:
         cbar = fig.colorbar(last_im, ax=axes[0, -1], fraction=0.04, pad=0.02)
         cbar.set_label("z-score")
-    fig.suptitle(f"{label} ({eid[:8]}) — baseline: {baseline}", fontsize=11)
+    fig.suptitle(f"{label} ({eid[:8]}) — event: {event} — baseline: {baseline}", fontsize=11)
     fig.tight_layout()
     return fig
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--event", choices=("noise", "valve", "gabor"), default="noise",
+        help="passive event to align on (default: noise)",
+    )
     parser.add_argument(
         "--baseline", choices=("mean", "median"), default="mean",
         help="per-trial baseline normalization: mean+std or median+MAD (default: mean)",
@@ -350,7 +366,9 @@ def main() -> None:
 
             panels = []
             for task_idx in (0, 1):
-                events, source = events_for_task(eid, task_idx, collections, anchor, one)
+                events, source = events_for_task(
+                    eid, task_idx, collections, anchor, one, args.event,
+                )
                 t0 = row.get(f"task{task_idx:02d}_replay_start")
                 t1 = row.get(f"task{task_idx:02d}_replay_stop")
                 saved = (t0, t1) if pd.notna(t0) and pd.notna(t1) else None
@@ -373,9 +391,9 @@ def main() -> None:
                             "n_resp": s["n_resp"], "n_depth": s["n_depth"],
                         })
 
-            fig = make_session_figure(label, eid, panels, d_edges, args.baseline)
+            fig = make_session_figure(label, eid, panels, d_edges, args.baseline, args.event)
             slug = label.replace(" ", "_").replace(":", "")
-            out = out_dir / f"{slug}_{eid[:8]}.png"
+            out = out_dir / f"{slug}_{eid[:8]}_{args.event}.png"
             fig.savefig(out, dpi=120)
             plt.close(fig)
             print(f"saved {out}")
