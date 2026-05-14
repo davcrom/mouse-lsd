@@ -18,7 +18,6 @@ paths = {
     'metadata': PROJECT_ROOT / Path('metadata/metadata.csv'),
     'sessions': PROJECT_ROOT / Path('metadata/sessions.pqt'),
     'insertions': PROJECT_ROOT / Path('metadata/insertions.pqt'),
-    'trajectories': PROJECT_ROOT / Path('metadata/trajectories.csv'),
     'units': PROJECT_ROOT / Path('data/units.pqt'),
     'bombcell': PROJECT_ROOT / Path('data/bombcell.pqt'),
     'spikes': PROJECT_ROOT / Path('data/spikes.h5'),
@@ -31,7 +30,7 @@ paths = {
 qc_datasets = {
     'task': [
         'raw_task_data_00/_iblrig_taskSettings.raw.json',
-        'raw_task_data_00/_iblrig_stimPositionScreen.raw.csv'
+        'raw_task_data_00/_iblrig_stimPositionScreen.raw.csv',
         'alf/task_00/_ibl_passivePeriods.intervalsTable.csv',
         'raw_task_data_01/_iblrig_taskSettings.raw.json',
         'raw_task_data_01/_iblrig_stimPositionScreen.raw.csv',
@@ -78,14 +77,16 @@ control_recordings = [
 df_controls = pd.DataFrame(data=control_recordings, columns=['subject', 'date', 'eid'])
 
 TASKTIMINGS = [
-    'task00_spontaneous_start', 'task00_spontaneous_stop',
-    'task00_rfm_start', 'task00_rfm_stop',
-    'task00_replay_start', 'task00_replay_stop',
+    'task_pre_spontaneous_start', 'task_pre_spontaneous_stop',
+    'task_pre_rfm_start', 'task_pre_rfm_stop',
+    'task_pre_replay_start', 'task_pre_replay_stop',
     'LSD_admin',
-    'task01_spontaneous_start', 'task01_spontaneous_stop',
-    'task01_rfm_start', 'task01_rfm_stop',
-    'task01_replay_start', 'task01_replay_stop'
+    'task_post_spontaneous_start', 'task_post_spontaneous_stop',
+    'task_post_rfm_start', 'task_post_rfm_stop',
+    'task_post_replay_start', 'task_post_replay_stop'
     ]
+
+PASSIVE_SLOTS = ('task_pre', 'task_post')
 
 postLSD_epoch_length = 5 * 60  # seconds
 postLSD_epoch_starts = np.arange(0, 30, 10) * 60  # seconds

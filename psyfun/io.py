@@ -15,10 +15,12 @@ from iblatlas.atlas import AllenAtlas
 atlas = AllenAtlas()
 
 from psyfun.atlas import region_parcellation
-from psyfun.config import paths, df_controls, TASKTIMINGS
+from psyfun.config import (ibl_project, paths, df_controls, TASKTIMINGS,
+                           PASSIVE_SLOTS, qc_datasets)
 
 PASSIVE_PROTOCOL_TOKEN = 'passive'
 SPONTANEOUS_PROTOCOL_TOKEN = 'spontaneous'
+PROTOCOL_SPONTANEOUS_DURATION_S = 300.0  # protocol design: 5 min spontaneous
 PROTOCOL_REPLAY_DURATION_S = 300.0  # protocol design: 5 min gabor replay
 RAW_TASK_COLLECTION_RE = re.compile(r'^raw_task_data_(\d+)$')
 
@@ -53,7 +55,7 @@ def fetch_sessions(one, save=True, qc=False):
         print("Unpacking quality control data...")
         df_sessions = df_sessions.progress_apply(_unpack_session_dict, one=one, axis='columns').copy()
     # Check if important datasets are present for the session
-    df_sessions['n_probes'] = df_sessions.apply(lambda x: len(one.eid2pid(x['eid'])[0]), axis='columns')
+    df_sessions['n_probes'] = df_sessions.apply(lambda x: _count_probes(x['eid'], one), axis='columns')
     df_sessions['n_tasks'] = df_sessions['task_protocol'].apply(lambda x: sum(['passive' in task.lower() for task in x.split('_')]))
     df_sessions['tasks'] = df_sessions.apply(lambda x: x['task_protocol'].split('/'), axis='columns')
     print("Checking datasets...")
@@ -61,8 +63,6 @@ def fetch_sessions(one, save=True, qc=False):
     # Add label for control sessions
     df_sessions['control_recording'] = df_sessions.apply(_label_controls, axis='columns')
     df_sessions['new_recording'] = df_sessions['start_time'].apply(lambda x: datetime.fromisoformat(x) > datetime(2025, 1, 1))
-    # Add label for the electrode insertion trajectories
-    df_sessions = get_trajectory_labels(df_sessions)
     # Fetch task protocol timings and add to dataframe
     print("Fetching protocol timings...")
     df_sessions = df_sessions.progress_apply(_fetch_protocol_timings, one=one, axis='columns').copy()
@@ -152,6 +152,15 @@ def _label_controls (session, controls=df_controls):
         raise ValueError("More than one entry in df_controls!")
 
 
+def _count_probes(eid: str, one) -> int:
+    """Number of probe insertions registered for `eid`. Warns and returns 0 if none."""
+    pids, _ = one.eid2pid(eid)
+    if pids is None:
+        warnings.warn(f"No probe insertions registered for eid={eid}; setting n_probes=0")
+        return 0
+    return len(pids)
+
+
 def _list_raw_task_collections(eid: str, one) -> list[str]:
     """All `raw_task_data_NN` collections present for `eid`, sorted by NN."""
     matches = {
@@ -186,6 +195,10 @@ def _fpga_timings_from_alf(intervals: pd.DataFrame, gabor: pd.DataFrame | None) 
     elif intervals.index.name != '':
         intervals = intervals.set_index(intervals.columns[0])
     spont_start, spont_stop = intervals['spontaneousActivity'].iloc[:2].to_list()
+    # Clip to protocol-design duration so all sessions get an equal-length
+    # window. One session (c7cf8e25 task_00) has a 600 s alf interval —
+    # likely the IBL extractor merged the LSD-filler block into task_00.
+    spont_stop = min(float(spont_stop), float(spont_start) + PROTOCOL_SPONTANEOUS_DURATION_S)
     rfm_start, rfm_stop = intervals['RFM'].iloc[:2].to_list()
     if gabor is not None and len(gabor) > 0:
         replay_start = float(gabor['start'].min())
@@ -214,27 +227,30 @@ def _shift_timings(anchor: dict, anchor_rig_t0: datetime, target_rig_t0: datetim
 
 def _load_passive_run(eid: str, raw_col: str, one) -> dict | None:
     """
-    Load FPGA-aligned timings + rig anchor for one passive `raw_task_data_NN`.
+    Classify one `raw_task_data_NN` and load its FPGA-aligned timings.
 
-    Returns None if the protocol in this collection is not passive. If alf
-    data is missing, returns dict with `alf_missing=True` so the caller
-    can fill via rig-clock fallback.
+    Returns a dict tagged `kind='passive'` (with epoch boundaries; or
+    `alf_missing=True` for rig-clock fallback) for passive protocols, or
+    `kind='spontaneous'` (rig anchor only) for the LSD-filler protocol.
+    Returns None for any other protocol.
     """
     settings = one.load_dataset(eid, '_iblrig_taskSettings.raw.json', raw_col)
     protocol = settings.get('PYBPOD_PROTOCOL', '')
-    if SPONTANEOUS_PROTOCOL_TOKEN in protocol or PASSIVE_PROTOCOL_TOKEN not in protocol:
-        return None
     rig_t0 = _rig_session_datetime(settings)
+    if SPONTANEOUS_PROTOCOL_TOKEN in protocol and PASSIVE_PROTOCOL_TOKEN not in protocol:
+        return {'kind': 'spontaneous', 'rig_t0': rig_t0}
+    if PASSIVE_PROTOCOL_TOKEN not in protocol:
+        return None
     alf_col = raw_col.replace('raw_task_data_', 'alf/task_')
     try:
         intervals = one.load_dataset(eid, '_ibl_passivePeriods.intervalsTable.csv', alf_col)
     except ALFObjectNotFound:
-        return {'rig_t0': rig_t0, 'alf_missing': True}
+        return {'kind': 'passive', 'rig_t0': rig_t0, 'alf_missing': True}
     try:
         gabor = one.load_dataset(eid, '_ibl_passiveGabor.table.csv', alf_col)
     except ALFObjectNotFound:
         gabor = None
-    return {**_fpga_timings_from_alf(intervals, gabor), 'rig_t0': rig_t0}
+    return {'kind': 'passive', **_fpga_timings_from_alf(intervals, gabor), 'rig_t0': rig_t0}
 
 
 def _fetch_protocol_timings(series, one=None):
@@ -253,27 +269,36 @@ def _fetch_protocol_timings(series, one=None):
         one = _get_default_connection()
     eid = series['eid']
     for col in TASKTIMINGS:
-        if col != 'LSD_admin':
-            series[col] = np.nan
-    timings: list[dict] = []
+        series[col] = np.nan
+    runs: list[dict] = []
     for raw_col in _list_raw_task_collections(eid, one):
         run = _load_passive_run(eid, raw_col, one)
         if run is not None:
-            timings.append(run)
-    anchor = next((t for t in timings if not t.get('alf_missing')), None)
+            runs.append(run)
+    passives = [r for r in runs if r['kind'] == 'passive']
+    fillers = [r for r in runs if r['kind'] == 'spontaneous']
+    anchor = next((p for p in passives if not p.get('alf_missing')), None)
     if anchor is None:
         return series
-    for passive_idx, run in enumerate(timings):
+    for passive_idx, run in enumerate(passives):
         if run.get('alf_missing'):
             run = {**_shift_timings(anchor, anchor['rig_t0'], run['rig_t0']), 'rig_t0': run['rig_t0']}
+        slot = PASSIVE_SLOTS[passive_idx]
         for epoch in ('spontaneous', 'rfm', 'replay'):
             for endpoint in ('start', 'stop'):
-                series[f'task{passive_idx:02d}_{epoch}_{endpoint}'] = run[f'{epoch}_{endpoint}']
+                series[f'{slot}_{epoch}_{endpoint}'] = run[f'{epoch}_{endpoint}']
+    if fillers:
+        delta_s = (fillers[0]['rig_t0'] - anchor['rig_t0']).total_seconds()
+        series['LSD_admin'] = anchor['spontaneous_start'] + delta_s
     return series
 
 
 def _insert_LSD_admin_time(series, df_metadata=None):
     assert df_metadata is not None
+    # Sessions with a spontaneous-filler protocol already have LSD_admin set
+    # by `_fetch_protocol_timings` (start of that protocol in FPGA seconds).
+    if pd.notna(series.get('LSD_admin')):
+        return series
     # Find entry in metadata file by subject and date
     session_meta = df_metadata[
         (df_metadata['animal_ID'] == series['subject']) &
@@ -287,47 +312,6 @@ def _insert_LSD_admin_time(series, df_metadata=None):
         warnings.warn(f"More than one entry in 'metadata.csv' for {series['eid']}")
         return series
     series['LSD_admin'] = session_meta['administration_time'].values[0]
-    return series
-
-
-def get_trajectory_labels(df_sessions, drop=True, hemisphere=True):
-    df_trajectories = pd.read_csv(paths['trajectories'])
-    df_sessions = df_sessions.apply(
-        _insert_trajectory_labels,
-        df_trajectories=df_trajectories,
-        axis='columns'
-        ).copy()
-    if drop:
-        df_sessions = df_sessions.dropna(subset=['trajectory_01', 'trajectory_02'])
-    if hemisphere:
-        combine_labels = lambda x: '_'.join([
-            str(x['trajectory_01']),
-            str(x['trajectory_02'])
-            ])
-    else:
-        combine_labels = lambda x: '_'.join([
-            str(x['trajectory_01']).rstrip('L').rstrip('R'),
-            str(x['trajectory_02']).rstrip('L').rstrip('R')
-            ])
-    df_sessions['trajectory_label'] = df_sessions.apply(
-        combine_labels,
-        axis='columns'
-    )
-    return df_sessions
-
-
-def _insert_trajectory_labels(series, df_trajectories):
-    # assert df_trajectories is not None
-    eid = series['eid']
-    trajectories = df_trajectories.query('eid == @eid')
-    if len(trajectories) == 1:
-        trajectories = trajectories.iloc[0]
-        for col in trajectories.index:
-            if col in ['date', 'subject', 'eid']:
-                continue
-            series[col] = trajectories[col]
-    elif len(trajectories) > 1:
-        raise ValueError(f"Multiple trajectory entries found for eid {eid}")
     return series
 
 

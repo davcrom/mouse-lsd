@@ -79,15 +79,15 @@ def test_canonical_alf_for_two_passive_runs():
     )
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
-    assert result["task00_spontaneous_start"] == 50
-    assert result["task00_spontaneous_stop"] == 350
-    assert result["task00_rfm_start"] == 362
-    assert result["task00_rfm_stop"] == 663
-    assert result["task00_replay_start"] == 685.0
-    assert result["task00_replay_stop"] == 985.3
-    assert result["task01_spontaneous_start"] == 2916
-    assert result["task01_replay_start"] == 3551.0
-    assert result["task01_replay_stop"] == 3848.3
+    assert result["task_pre_spontaneous_start"] == 50
+    assert result["task_pre_spontaneous_stop"] == 350
+    assert result["task_pre_rfm_start"] == 362
+    assert result["task_pre_rfm_stop"] == 663
+    assert result["task_pre_replay_start"] == 685.0
+    assert result["task_pre_replay_stop"] == 985.3
+    assert result["task_post_spontaneous_start"] == 2916
+    assert result["task_post_replay_start"] == 3551.0
+    assert result["task_post_replay_stop"] == 3848.3
 
 
 def test_skip_spontaneous_filler_in_3_task_session():
@@ -122,12 +122,46 @@ def test_skip_spontaneous_filler_in_3_task_session():
     )
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
-    # Filler must NOT populate task01_*; second passive should land in task01_*.
-    assert result["task00_spontaneous_start"] == 50
+    # Filler must NOT populate task_post_*; second passive should land in task_post_*.
+    assert result["task_pre_spontaneous_start"] == 50
     rig_delta_s = (datetime.fromisoformat("2025-03-11T18:50:00")
                    - datetime.fromisoformat("2025-03-11T18:00:00")).total_seconds()
-    assert result["task01_spontaneous_start"] == pytest.approx(50 + rig_delta_s)
-    assert result["task01_replay_start"] == pytest.approx(685.0 + rig_delta_s)
+    assert result["task_post_spontaneous_start"] == pytest.approx(50 + rig_delta_s)
+    assert result["task_post_replay_start"] == pytest.approx(685.0 + rig_delta_s)
+    # LSD_admin = FPGA time at which the spontaneous filler started.
+    filler_delta_s = (datetime.fromisoformat("2025-03-11T18:20:00")
+                      - datetime.fromisoformat("2025-03-11T18:00:00")).total_seconds()
+    assert result["LSD_admin"] == pytest.approx(50 + filler_delta_s)
+
+
+def test_no_filler_leaves_lsd_admin_nan():
+    """2-task session: LSD_admin must remain NaN so the metadata.csv lookup fills it."""
+    eid = "EID_NOFILLER"
+    intervals_00 = _intervals_df((50, 350), (362, 663), (675, 980))
+    gabor_00 = _gabor_df([685.0], [685.3])
+    settings_00 = {"PYBPOD_PROTOCOL": "_iblrig_tasks_passiveChoiceWorld",
+                   "SESSION_DATETIME": "2023-04-01T10:00:00"}
+    settings_01 = {"PYBPOD_PROTOCOL": "_iblrig_tasks_passiveChoiceWorld",
+                   "SESSION_DATETIME": "2023-04-01T10:50:00"}
+    one = FakeOne(
+        datasets={
+            (eid, "_iblrig_taskSettings.raw.json", "raw_task_data_00"): settings_00,
+            (eid, "_iblrig_taskSettings.raw.json", "raw_task_data_01"): settings_01,
+            (eid, "_ibl_passivePeriods.intervalsTable.csv", "alf/task_00"): intervals_00,
+            (eid, "_ibl_passiveGabor.table.csv", "alf/task_00"): gabor_00,
+        },
+        list_datasets_map={
+            eid: [
+                "raw_task_data_00/_iblrig_taskSettings.raw.json",
+                "raw_task_data_01/_iblrig_taskSettings.raw.json",
+                "alf/task_00/_ibl_passivePeriods.intervalsTable.csv",
+                "alf/task_00/_ibl_passiveGabor.table.csv",
+            ],
+        },
+    )
+    series = pd.Series({"eid": eid})
+    result = io._fetch_protocol_timings(series, one=one)
+    assert pd.isna(result["LSD_admin"])
 
 
 def test_fallback_when_alf_missing_for_second_passive():
@@ -158,9 +192,9 @@ def test_fallback_when_alf_missing_for_second_passive():
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
     rig_delta = 50 * 60.0
-    assert result["task01_spontaneous_start"] == pytest.approx(50 + rig_delta)
-    assert result["task01_rfm_start"] == pytest.approx(362 + rig_delta)
-    assert result["task01_replay_stop"] == pytest.approx(985.3 + rig_delta)
+    assert result["task_post_spontaneous_start"] == pytest.approx(50 + rig_delta)
+    assert result["task_post_rfm_start"] == pytest.approx(362 + rig_delta)
+    assert result["task_post_replay_stop"] == pytest.approx(985.3 + rig_delta)
 
 
 def test_no_alf_anywhere_returns_nan():
@@ -178,9 +212,36 @@ def test_no_alf_anywhere_returns_nan():
     )
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
-    assert "task00_spontaneous_start" not in result or pd.isna(
-        result.get("task00_spontaneous_start")
+    assert "task_pre_spontaneous_start" not in result or pd.isna(
+        result.get("task_pre_spontaneous_start")
     )
+
+
+def test_spontaneous_clipped_to_300s_when_alf_reports_longer():
+    """alf reports 600 s spontaneous (extractor merged adjacent block); clip stop to start+300."""
+    eid = "EID_LONGSPONT"
+    intervals_00 = _intervals_df((50, 650), (665, 966), (978, 1278))  # 600 s spontaneous
+    gabor_00 = _gabor_df([985.0], [985.3])
+    settings_00 = {"PYBPOD_PROTOCOL": "_iblrig_tasks_passiveChoiceWorld",
+                   "SESSION_DATETIME": "2025-03-11T18:00:00"}
+    one = FakeOne(
+        datasets={
+            (eid, "_iblrig_taskSettings.raw.json", "raw_task_data_00"): settings_00,
+            (eid, "_ibl_passivePeriods.intervalsTable.csv", "alf/task_00"): intervals_00,
+            (eid, "_ibl_passiveGabor.table.csv", "alf/task_00"): gabor_00,
+        },
+        list_datasets_map={
+            eid: [
+                "raw_task_data_00/_iblrig_taskSettings.raw.json",
+                "alf/task_00/_ibl_passivePeriods.intervalsTable.csv",
+                "alf/task_00/_ibl_passiveGabor.table.csv",
+            ],
+        },
+    )
+    series = pd.Series({"eid": eid})
+    result = io._fetch_protocol_timings(series, one=one)
+    assert result["task_pre_spontaneous_start"] == 50
+    assert result["task_pre_spontaneous_stop"] == pytest.approx(50 + 300)
 
 
 def test_replay_fallback_when_gabor_missing():
@@ -203,5 +264,5 @@ def test_replay_fallback_when_gabor_missing():
     )
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
-    assert result["task00_replay_start"] == 675
-    assert result["task00_replay_stop"] == pytest.approx(675 + 300)
+    assert result["task_pre_replay_start"] == 675
+    assert result["task_pre_replay_stop"] == pytest.approx(675 + 300)
