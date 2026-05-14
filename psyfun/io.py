@@ -28,7 +28,7 @@ PROTOCOL_SPONTANEOUS_DURATION_S = 300.0  # protocol design: 5 min spontaneous
 PROTOCOL_REPLAY_DURATION_S = 300.0  # protocol design: 5 min gabor replay
 RAW_TASK_COLLECTION_RE = re.compile(r'^raw_task_data_(\d+)$')
 
-# Three-state extraction-status vocabulary used by the dataset audit.
+# Three-state extraction-status vocabulary used by the dataset check.
 EXTRACTION_COMPLETE = 'extraction complete'
 EXTRACTION_ERROR = 'extraction error'
 RAW_DATA_MISSING = 'raw data missing'
@@ -39,9 +39,10 @@ TASK_ALF_FILES = {
     'passiveStims': '_ibl_passiveStims.table.csv',
     'passiveGabor': '_ibl_passiveGabor.table.csv',
 }
-# Spike sorters whose output may be registered on Alyx, newest output wins.
+# Spike sorters whose output may be registered on Alyx, in priority order:
+# the first sorter with a registered `spikes.times.npy` wins.
 SPIKE_SORTERS = ('iblsorter', 'pykilosort', 'ks2')
-# Spike-data files that must all load for a probe to count as sorted.
+# Spike-data files that must all be present for a probe to count as sorted.
 SPIKE_ALF_FILES = ('spikes.times.npy', 'spikes.clusters.npy', 'clusters.uuids.csv')
 # Bombcell writes this file next to the spike-sorting output on disk.
 BOMBCELL_OUTPUT_FILE = 'templates._bc_qMetrics.parquet'
@@ -51,9 +52,9 @@ def fetch_sessions(one, save=True):
     """
     Query Alyx for sessions tagged in the psychedelics project and add session
     info to a dataframe. Sessions are restricted to those with the
-    passiveChoiceWorld task protocol, dataset-extraction status is audited by
-    load, and task protocol timings are added. Sessions are sorted and labelled
-    (session_n) by their order.
+    passiveChoiceWorld task protocol, dataset-extraction status is checked
+    against the Alyx dataset registry, and task protocol timings are added.
+    Sessions are sorted and labelled (session_n) by their order.
 
     Parameters
     ----------
@@ -74,9 +75,9 @@ def fetch_sessions(one, save=True):
     df_sessions['n_probes'] = df_sessions.apply(lambda x: _count_probes(x['eid'], one), axis='columns')
     df_sessions['n_tasks'] = df_sessions['task_protocol'].apply(lambda x: sum(['passive' in task.lower() for task in x.split('_')]))
     df_sessions['tasks'] = df_sessions.apply(lambda x: x['task_protocol'].split('/'), axis='columns')
-    # Audit dataset-extraction status by loading each relevant dataset
-    print("Auditing datasets...")
-    df_sessions = df_sessions.progress_apply(_audit_datasets, one=one, axis='columns').copy()
+    # Check dataset-extraction status against the Alyx dataset registry
+    print("Checking datasets...")
+    df_sessions = df_sessions.progress_apply(_check_datasets, one=one, axis='columns').copy()
     # Add label for control sessions
     df_sessions['control_recording'] = df_sessions.apply(_label_controls, axis='columns')
     # Fetch task protocol timings and add to dataframe
@@ -307,39 +308,40 @@ def _insert_LSD_admin_time(series, df_metadata=None):
     return series
 
 
-def _three_state(loaded: bool, raw_present: bool) -> str:
-    """Status for an extracted dataset given whether it loaded and its raw prereq."""
-    if loaded:
+def _three_state(present: bool, raw_present: bool) -> str:
+    """Status for an extracted dataset given whether it is present and its raw prereq."""
+    if present:
         return EXTRACTION_COMPLETE
     return EXTRACTION_ERROR if raw_present else RAW_DATA_MISSING
 
 
-def _loads(eid: str, names: list[str], collection: str, one, **kwargs) -> bool:
-    """True if `one.load_dataset` succeeds for any of `names` in `collection`."""
-    for name in names:
-        try:
-            one.load_dataset(eid, name, collection, **kwargs)
-            return True
-        except ALFObjectNotFound:
-            continue
-    return False
+def _raw_task_collections_from_registry(dsr: list[dict]) -> list[str]:
+    """`raw_task_data_NN` collection names in the dataset registry, sorted by NN."""
+    matches = {
+        m.group(0): int(m.group(1))
+        for d in dsr
+        for m in [RAW_TASK_COLLECTION_RE.match(d['collection'])]
+        if m
+    }
+    return [c for c, _ in sorted(matches.items(), key=lambda kv: kv[1])]
 
 
-def _list_passive_raw_collections(eid: str, one) -> list[str]:
+def _list_passive_raw_collections(eid: str, dsr: list[dict], one) -> list[str]:
     """`raw_task_data_NN` collections of the passive runs, in run order.
 
-    Reuses `_load_passive_run`'s protocol classification so the
-    spontaneous-only LSD-filler run is excluded.
+    Derives the candidate `raw_task_data_NN` collections from the dataset
+    registry, then reuses `_load_passive_run`'s protocol classification so
+    the spontaneous-only LSD-filler run is excluded.
     """
     passives = []
-    for raw_col in _list_raw_task_collections(eid, one):
+    for raw_col in _raw_task_collections_from_registry(dsr):
         run = _load_passive_run(eid, raw_col, one)
         if run is not None and run['kind'] == 'passive':
             passives.append(raw_col)
     return passives
 
 
-def _audit_task_alf(eid: str, slot: int, raw_col: str | None, one) -> dict:
+def _check_task_alf(present: set, slot: int, raw_col: str | None) -> dict:
     """Status of the three passive-task alf datasets for one passive slot."""
     prefix = PASSIVE_SLOTS[slot]
     if raw_col is None:
@@ -347,7 +349,7 @@ def _audit_task_alf(eid: str, slot: int, raw_col: str | None, one) -> dict:
     alf_col = raw_col.replace('raw_task_data_', 'alf/task_')
     return {
         f'{prefix}_{short}': _three_state(
-            _loads(eid, [name], alf_col, one), raw_present=True
+            (alf_col, name) in present, raw_present=True
         )
         for short, name in TASK_ALF_FILES.items()
     }
@@ -361,27 +363,44 @@ def _imec_names(suffix: str, slot: int) -> list[str]:
     ]
 
 
-def _pick_latest_sorter(eid: str, probe: str, one) -> tuple[str, str]:
-    """Sorter name and revision of the most recently created spike sorting.
+def _pick_sorter(dsr: list[dict], probe: str) -> tuple[str, str, str]:
+    """Sorter, revision and version of the spike sorting registered for `probe`.
 
-    Queries Alyx for `spikes.times.npy` across all known sorters and
-    returns the `(sorter, revision)` of the newest record, or `('', '')`
-    if no sorter output is registered.
+    Walks `SPIKE_SORTERS` in priority order and returns the first sorter
+    with a registered `spikes.times.npy`. Within that sorter, the entry
+    whose `default_revision` is the string `'True'` is preferred (falling
+    back to the first entry). Returns `('', '', '')` when no sorter output
+    is registered.
     """
-    records = []
     for sorter in SPIKE_SORTERS:
-        for rec in one.alyx.rest(
-            'datasets', 'list', session=eid, name='spikes.times.npy',
-            collection=f'alf/{probe}/{sorter}',
-        ):
-            records.append((sorter, rec.get('revision') or '', rec['date_created']))
-    if not records:
-        return '', ''
-    sorter, revision, _ = max(records, key=lambda r: r[2])
-    return sorter, revision
+        entries = [
+            d for d in dsr
+            if d['name'] == 'spikes.times.npy'
+            and d['collection'] == f'alf/{probe}/{sorter}'
+        ]
+        if entries:
+            entry = next(
+                (e for e in entries if e.get('default_revision') == 'True'),
+                entries[0],
+            )
+            return sorter, entry.get('revision') or '', entry.get('version') or ''
+    return '', '', ''
 
 
-def _audit_probe(eid: str, slot: int, ins: dict | None, one) -> dict:
+def _format_sorter(sorter: str, revision: str, version: str) -> str:
+    """`probeNN_sorter` label: name + `#revision#` + ` (version)` when present."""
+    if not sorter:
+        return ''
+    label = sorter
+    if revision:
+        label += f'#{revision}#'
+    if version:
+        label += f' ({version})'
+    return label
+
+
+def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
+                 session_path) -> dict:
     """Status of the raw, sync, spike-sorting and bombcell data for one probe slot."""
     prefix = f'probe{slot:02d}'
     if ins is None:
@@ -394,34 +413,31 @@ def _audit_probe(eid: str, slot: int, ins: dict | None, one) -> dict:
         }
     probe = ins['name']
     raw_col = f'raw_ephys_data/{probe}'
-    raw_ap = _loads(eid, _imec_names('ap.cbin', slot), raw_col, one)
-    sync = _loads(eid, _imec_names('sync.npy', slot), raw_col, one)
+    raw_ap = any((raw_col, name) in present for name in _imec_names('ap.cbin', slot))
+    sync = any((raw_col, name) in present for name in _imec_names('sync.npy', slot))
 
-    sorter, revision = _pick_latest_sorter(eid, probe, one)
+    sorter, revision, version = _pick_sorter(dsr, probe)
     if sorter:
-        spikes_loaded = all(
-            _loads(eid, [name], f'alf/{probe}/{sorter}', one, revision=revision)
-            for name in SPIKE_ALF_FILES
+        spikes_present = all(
+            (f'alf/{probe}/{sorter}', name) in present for name in SPIKE_ALF_FILES
         )
-        sorter_label = sorter + (f'#{revision}#' if revision else '')
     else:
-        spikes_loaded = False
-        sorter_label = ''
+        spikes_present = False
 
     bombcell_path = (
-        one.eid2path(eid) / 'spike_sorters' / sorter / probe
+        session_path / 'spike_sorters' / sorter / probe
         / 'bombcell' / BOMBCELL_OUTPUT_FILE
     )
     return {
         f'{prefix}_raw_ap': EXTRACTION_COMPLETE if raw_ap else RAW_DATA_MISSING,
         f'{prefix}_sync': _three_state(sync, raw_present=raw_ap),
-        f'{prefix}_sorter': sorter_label,
-        f'{prefix}_spikes': _three_state(spikes_loaded, raw_present=raw_ap),
+        f'{prefix}_sorter': _format_sorter(sorter, revision, version),
+        f'{prefix}_spikes': _three_state(spikes_present, raw_present=raw_ap),
         f'{prefix}_bombcell': _three_state(bombcell_path.is_file(), raw_present=raw_ap),
     }
 
 
-def _audit_histology_probe(eid: str, slot: int, ins: dict | None, one) -> dict:
+def _check_histology_probe(eid: str, slot: int, ins: dict | None, one) -> dict:
     """Histology-pipeline progress booleans for one probe slot."""
     prefix = f'probe{slot:02d}'
     if ins is None:
@@ -450,13 +466,11 @@ def _qc_outcome(extended_qc: dict, key: str) -> str:
     return val
 
 
-def _audit_camera(eid: str, cam: str, extended_qc: dict, one) -> dict:
+def _check_camera(present: set, cam: str, extended_qc: dict) -> dict:
     """Status of raw video and pose tracking plus three video-QC outcomes."""
     prefix = f'{cam}_camera'
-    raw_video = _loads(
-        eid, [f'_iblrig_{cam}Camera.raw.mp4'], 'raw_video_data', one
-    )
-    pose = _loads(eid, [f'_ibl_{cam}Camera.lightningPose.pqt'], 'alf', one)
+    raw_video = ('raw_video_data', f'_iblrig_{cam}Camera.raw.mp4') in present
+    pose = ('alf', f'_ibl_{cam}Camera.lightningPose.pqt') in present
     capcam = cam.capitalize()
     return {
         f'{prefix}_raw_video': (
@@ -481,27 +495,37 @@ def _check_image_stacks(subject: str, lab: str) -> bool:
     return len(list_histology_tifs(subject, lab, params.get())) >= 2
 
 
-def _audit_datasets(series, one=None):
-    """Add the 38 load-based audit columns for one session (see specs/audit_dataset_extraction.md)."""
+def _check_datasets(series, one=None):
+    """Add the 38 registry-based check columns for one session.
+
+    See specs/check_dataset_extraction.md. Dataset presence is read from
+    the Alyx `sessions/read` field `data_dataset_session_related`: a
+    dataset is present when its `(collection, name)` pair has a non-null
+    `data_url`.
+    """
     if one is None:
         one = _get_default_connection()
     eid = series['eid']
+    session = one.alyx.rest('sessions', 'read', id=eid)
+    dsr = session.get('data_dataset_session_related') or []
+    extended_qc = session.get('extended_qc') or {}
+    present = {(d['collection'], d['name']) for d in dsr if d['data_url']}
     out = {}
-    passives = _list_passive_raw_collections(eid, one)
+    passives = _list_passive_raw_collections(eid, dsr, one)
     for slot in (0, 1):
         raw_col = passives[slot] if slot < len(passives) else None
-        out.update(_audit_task_alf(eid, slot, raw_col, one))
+        out.update(_check_task_alf(present, slot, raw_col))
     insertions = sorted(
         one.alyx.rest('insertions', 'list', session=eid, no_cache=True),
         key=lambda ins: ins['name'],
     )
+    session_path = one.eid2path(eid)
     for slot in (0, 1):
         ins = insertions[slot] if slot < len(insertions) else None
-        out.update(_audit_probe(eid, slot, ins, one))
-        out.update(_audit_histology_probe(eid, slot, ins, one))
-    extended_qc = one.alyx.rest('sessions', 'read', id=eid).get('extended_qc') or {}
+        out.update(_check_probe(present, dsr, slot, ins, session_path))
+        out.update(_check_histology_probe(eid, slot, ins, one))
     for cam in ('left', 'right', 'body'):
-        out.update(_audit_camera(eid, cam, extended_qc, one))
+        out.update(_check_camera(present, cam, extended_qc))
     out['image_stacks'] = _check_image_stacks(series['subject'], series['lab'])
     for key, val in out.items():
         series[key] = val
