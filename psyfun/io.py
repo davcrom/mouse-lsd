@@ -9,6 +9,7 @@ tqdm.pandas()
 import warnings
 import h5py
 
+from one import params
 from one.alf.exceptions import ALFObjectNotFound
 from brainbox.io.one import SpikeSortingLoader
 from iblatlas.atlas import AllenAtlas
@@ -17,12 +18,33 @@ atlas = AllenAtlas()
 from psyfun.atlas import region_parcellation
 from psyfun.config import (ibl_project, paths, df_controls, TASKTIMINGS,
                            PASSIVE_SLOTS, qc_datasets)
+from psyfun.histology import (list_histology_tifs, insertion_picks,
+                              insertion_alignment_uploaded,
+                              insertion_alignment_resolved)
 
 PASSIVE_PROTOCOL_TOKEN = 'passive'
 SPONTANEOUS_PROTOCOL_TOKEN = 'spontaneous'
 PROTOCOL_SPONTANEOUS_DURATION_S = 300.0  # protocol design: 5 min spontaneous
 PROTOCOL_REPLAY_DURATION_S = 300.0  # protocol design: 5 min gabor replay
 RAW_TASK_COLLECTION_RE = re.compile(r'^raw_task_data_(\d+)$')
+
+# Three-state extraction-status vocabulary used by the dataset audit.
+EXTRACTION_COMPLETE = 'extraction complete'
+EXTRACTION_ERROR = 'extraction error'
+RAW_DATA_MISSING = 'raw data missing'
+
+# Task-level alf datasets checked per passive slot.
+TASK_ALF_FILES = {
+    'intervalsTable': '_ibl_passivePeriods.intervalsTable.csv',
+    'passiveStims': '_ibl_passiveStims.table.csv',
+    'passiveGabor': '_ibl_passiveGabor.table.csv',
+}
+# Spike sorters whose output may be registered on Alyx, newest output wins.
+SPIKE_SORTERS = ('iblsorter', 'pykilosort', 'ks2')
+# Spike-data files that must all load for a probe to count as sorted.
+SPIKE_ALF_FILES = ('spikes.times.npy', 'spikes.clusters.npy', 'clusters.uuids.csv')
+# Bombcell writes this file next to the spike-sorting output on disk.
+BOMBCELL_OUTPUT_FILE = 'templates._bc_qMetrics.parquet'
 
 
 def fetch_sessions(one, save=True, qc=False):
@@ -312,6 +334,207 @@ def _insert_LSD_admin_time(series, df_metadata=None):
         warnings.warn(f"More than one entry in 'metadata.csv' for {series['eid']}")
         return series
     series['LSD_admin'] = session_meta['administration_time'].values[0]
+    return series
+
+
+def _three_state(loaded: bool, raw_present: bool) -> str:
+    """Status for an extracted dataset given whether it loaded and its raw prereq."""
+    if loaded:
+        return EXTRACTION_COMPLETE
+    return EXTRACTION_ERROR if raw_present else RAW_DATA_MISSING
+
+
+def _loads(eid: str, names: list[str], collection: str, one, **kwargs) -> bool:
+    """True if `one.load_dataset` succeeds for any of `names` in `collection`."""
+    for name in names:
+        try:
+            one.load_dataset(eid, name, collection, **kwargs)
+            return True
+        except ALFObjectNotFound:
+            continue
+    return False
+
+
+def _list_passive_raw_collections(eid: str, one) -> list[str]:
+    """`raw_task_data_NN` collections of the passive runs, in run order.
+
+    Reuses `_load_passive_run`'s protocol classification so the
+    spontaneous-only LSD-filler run is excluded.
+    """
+    passives = []
+    for raw_col in _list_raw_task_collections(eid, one):
+        run = _load_passive_run(eid, raw_col, one)
+        if run is not None and run['kind'] == 'passive':
+            passives.append(raw_col)
+    return passives
+
+
+def _audit_task_alf(eid: str, slot: int, raw_col: str | None, one) -> dict:
+    """Status of the three passive-task alf datasets for one passive slot."""
+    prefix = PASSIVE_SLOTS[slot]
+    if raw_col is None:
+        return {f'{prefix}_{short}': RAW_DATA_MISSING for short in TASK_ALF_FILES}
+    alf_col = raw_col.replace('raw_task_data_', 'alf/task_')
+    return {
+        f'{prefix}_{short}': _three_state(
+            _loads(eid, [name], alf_col, one), raw_present=True
+        )
+        for short, name in TASK_ALF_FILES.items()
+    }
+
+
+def _imec_names(suffix: str, slot: int) -> list[str]:
+    """Both IBL SpikeGLX filename forms (`imec0` and `imec00`) for a probe slot."""
+    return [
+        f'_spikeglx_ephysData_g0_t0.imec{slot}.{suffix}',
+        f'_spikeglx_ephysData_g0_t0.imec{slot:02d}.{suffix}',
+    ]
+
+
+def _pick_latest_sorter(eid: str, probe: str, one) -> tuple[str, str]:
+    """Sorter name and revision of the most recently created spike sorting.
+
+    Queries Alyx for `spikes.times.npy` across all known sorters and
+    returns the `(sorter, revision)` of the newest record, or `('', '')`
+    if no sorter output is registered.
+    """
+    records = []
+    for sorter in SPIKE_SORTERS:
+        for rec in one.alyx.rest(
+            'datasets', 'list', session=eid, name='spikes.times.npy',
+            collection=f'alf/{probe}/{sorter}',
+        ):
+            records.append((sorter, rec.get('revision') or '', rec['date_created']))
+    if not records:
+        return '', ''
+    sorter, revision, _ = max(records, key=lambda r: r[2])
+    return sorter, revision
+
+
+def _audit_probe(eid: str, slot: int, ins: dict | None, one) -> dict:
+    """Status of the raw, sync, spike-sorting and bombcell data for one probe slot."""
+    prefix = f'probe{slot:02d}'
+    if ins is None:
+        return {
+            f'{prefix}_raw_ap': RAW_DATA_MISSING,
+            f'{prefix}_sync': RAW_DATA_MISSING,
+            f'{prefix}_sorter': '',
+            f'{prefix}_spikes': RAW_DATA_MISSING,
+            f'{prefix}_bombcell': RAW_DATA_MISSING,
+        }
+    probe = ins['name']
+    raw_col = f'raw_ephys_data/{probe}'
+    raw_ap = _loads(eid, _imec_names('ap.cbin', slot), raw_col, one)
+    sync = _loads(eid, _imec_names('sync.npy', slot), raw_col, one)
+
+    sorter, revision = _pick_latest_sorter(eid, probe, one)
+    if sorter:
+        spikes_loaded = all(
+            _loads(eid, [name], f'alf/{probe}/{sorter}', one, revision=revision)
+            for name in SPIKE_ALF_FILES
+        )
+        sorter_label = sorter + (f'#{revision}#' if revision else '')
+    else:
+        spikes_loaded = False
+        sorter_label = ''
+
+    bombcell_path = (
+        one.eid2path(eid) / 'spike_sorters' / sorter / probe
+        / 'bombcell' / BOMBCELL_OUTPUT_FILE
+    )
+    return {
+        f'{prefix}_raw_ap': EXTRACTION_COMPLETE if raw_ap else RAW_DATA_MISSING,
+        f'{prefix}_sync': _three_state(sync, raw_present=raw_ap),
+        f'{prefix}_sorter': sorter_label,
+        f'{prefix}_spikes': _three_state(spikes_loaded, raw_present=raw_ap),
+        f'{prefix}_bombcell': _three_state(bombcell_path.is_file(), raw_present=raw_ap),
+    }
+
+
+def _audit_histology_probe(eid: str, slot: int, ins: dict | None, one) -> dict:
+    """Histology-pipeline progress booleans for one probe slot."""
+    prefix = f'probe{slot:02d}'
+    if ins is None:
+        return {
+            f'{prefix}_traced': False,
+            f'{prefix}_alignment_uploaded': False,
+            f'{prefix}_alignment_resolved': False,
+        }
+    full = one.alyx.rest('insertions', 'list', id=ins['id'], no_cache=True)[0]
+    return {
+        f'{prefix}_traced': insertion_picks(full),
+        f'{prefix}_alignment_uploaded': insertion_alignment_uploaded(full),
+        f'{prefix}_alignment_resolved': insertion_alignment_resolved(full),
+    }
+
+
+def _qc_outcome(extended_qc: dict, key: str) -> str:
+    """Extended-QC outcome string for `key`; '' when absent.
+
+    Some entries store a list whose first element is the outcome; others
+    store the outcome string directly.
+    """
+    val = extended_qc.get(key, '')
+    if isinstance(val, list):
+        return val[0] if val else ''
+    return val
+
+
+def _audit_camera(eid: str, cam: str, extended_qc: dict, one) -> dict:
+    """Status of raw video and pose tracking plus three video-QC outcomes."""
+    prefix = f'{cam}_camera'
+    raw_video = _loads(
+        eid, [f'_iblrig_{cam}Camera.raw.mp4'], 'raw_video_data', one
+    )
+    pose = _loads(eid, [f'_ibl_{cam}Camera.lightningPose.pqt'], 'alf', one)
+    capcam = cam.capitalize()
+    return {
+        f'{prefix}_raw_video': (
+            EXTRACTION_COMPLETE if raw_video else RAW_DATA_MISSING
+        ),
+        f'{prefix}_pose': _three_state(pose, raw_present=raw_video),
+        f'{prefix}_dropped_frames': _qc_outcome(
+            extended_qc, f'_video{capcam}_dropped_frames'
+        ),
+        f'{prefix}_timestamps': _qc_outcome(
+            extended_qc, f'_video{capcam}_timestamps'
+        ),
+        f'{prefix}_pin_state': _qc_outcome(
+            extended_qc, f'_video{capcam}_pin_state'
+        ),
+    }
+
+
+@lru_cache(maxsize=None)
+def _check_image_stacks(subject: str, lab: str) -> bool:
+    """True if at least two histology image stacks are published for `subject`."""
+    return len(list_histology_tifs(subject, lab, params.get())) >= 2
+
+
+def _audit_datasets(series, one=None):
+    """Add the 38 load-based audit columns for one session (see specs/audit_dataset_extraction.md)."""
+    if one is None:
+        one = _get_default_connection()
+    eid = series['eid']
+    out = {}
+    passives = _list_passive_raw_collections(eid, one)
+    for slot in (0, 1):
+        raw_col = passives[slot] if slot < len(passives) else None
+        out.update(_audit_task_alf(eid, slot, raw_col, one))
+    insertions = sorted(
+        one.alyx.rest('insertions', 'list', session=eid, no_cache=True),
+        key=lambda ins: ins['name'],
+    )
+    for slot in (0, 1):
+        ins = insertions[slot] if slot < len(insertions) else None
+        out.update(_audit_probe(eid, slot, ins, one))
+        out.update(_audit_histology_probe(eid, slot, ins, one))
+    extended_qc = one.alyx.rest('sessions', 'read', id=eid).get('extended_qc') or {}
+    for cam in ('left', 'right', 'body'):
+        out.update(_audit_camera(eid, cam, extended_qc, one))
+    out['image_stacks'] = _check_image_stacks(series['subject'], series['lab'])
+    for key, val in out.items():
+        series[key] = val
     return series
 
 
