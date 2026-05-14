@@ -18,29 +18,15 @@ df_sessions = get_trajectory_labels(df_sessions)
 # Check that necessary task data is present
 # Note: rather than checking the raw datasets, we just check if we were able to
 # find protocol timings with io._fetch_protocol_timings
-task_timings = [
-    'task00_spontaneous_start', 'task00_spontaneous_stop',
-    'task00_rfm_start', 'task00_rfm_stop',
-    'task00_replay_start', 'task00_replay_start',
-    'LSD_admin',
-    'task01_spontaneous_start', 'task01_spontaneous_stop',
-    'task01_rfm_start', 'task01_rfm_stop',
-    'task01_replay_start', 'task01_replay_start',
-    ]
 df_sessions['task_ok'] = df_sessions.apply(
-    lambda x: all([not np.isnan(x[time]) for time in task_timings]),
+    lambda x: all([not np.isnan(x[time]) for time in TASKTIMINGS]),
     axis='columns'
     )
 
-# Check for spike sorted data set for each probe
-ephys_datasets = [
-    'alf/probe00/pykilosort/spikes.times.npy',
-    'alf/probe01/pykilosort/spikes.times.npy',
-    'alf/probe00/iblsorter/spikes.times.npy',
-    'alf/probe01/iblsorter/spikes.times.npy'
-    ]
+# Check for spike sorted data on at least one probe
+ephys_datasets = ['probe00_spikes', 'probe01_spikes']
 df_sessions['ephys_ok'] = df_sessions.apply(
-    lambda x: any([x[dset] for dset in ephys_datasets]),
+    lambda x: any([x[dset] == 'extraction complete' for dset in ephys_datasets]),
     axis='columns'
     )  # note: here we use 'any' rather than 'all', we just need some neurons
 
