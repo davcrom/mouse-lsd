@@ -17,7 +17,7 @@ atlas = AllenAtlas()
 
 from psyfun.atlas import region_parcellation
 from psyfun.config import (ibl_project, paths, df_controls, TASKTIMINGS,
-                           PASSIVE_SLOTS, qc_datasets)
+                           PASSIVE_SLOTS)
 from psyfun.histology import (list_histology_tifs, insertion_picks,
                               insertion_alignment_uploaded,
                               insertion_alignment_resolved)
@@ -47,12 +47,12 @@ SPIKE_ALF_FILES = ('spikes.times.npy', 'spikes.clusters.npy', 'clusters.uuids.cs
 BOMBCELL_OUTPUT_FILE = 'templates._bc_qMetrics.parquet'
 
 
-def fetch_sessions(one, save=True, qc=False):
+def fetch_sessions(one, save=True):
     """
     Query Alyx for sessions tagged in the psychedelics project and add session
     info to a dataframe. Sessions are restricted to those with the
-    passiveChoiceWorld task protocol, quality control metadata is unpacked, and
-    a list of key datasets is checked. Sessions are sorted and labelled
+    passiveChoiceWorld task protocol, dataset-extraction status is audited by
+    load, and task protocol timings are added. Sessions are sorted and labelled
     (session_n) by their order.
 
     Parameters
@@ -71,20 +71,14 @@ def fetch_sessions(one, save=True, qc=False):
     # Query for all sessions in the project with the specified task
     sessions = one.alyx.rest('sessions', 'list', project=ibl_project['name'], task_protocol=ibl_project['protocol'])
     df_sessions = pd.DataFrame(sessions).rename(columns={'id': 'eid'})
-    df_sessions.drop(columns='projects')
-    if qc:
-        # Unpack the extended qc from the session dict into dataframe columns
-        print("Unpacking quality control data...")
-        df_sessions = df_sessions.progress_apply(_unpack_session_dict, one=one, axis='columns').copy()
-    # Check if important datasets are present for the session
     df_sessions['n_probes'] = df_sessions.apply(lambda x: _count_probes(x['eid'], one), axis='columns')
     df_sessions['n_tasks'] = df_sessions['task_protocol'].apply(lambda x: sum(['passive' in task.lower() for task in x.split('_')]))
     df_sessions['tasks'] = df_sessions.apply(lambda x: x['task_protocol'].split('/'), axis='columns')
-    print("Checking datasets...")
-    df_sessions = df_sessions.progress_apply(_check_datasets, one=one, axis='columns').copy()
+    # Audit dataset-extraction status by loading each relevant dataset
+    print("Auditing datasets...")
+    df_sessions = df_sessions.progress_apply(_audit_datasets, one=one, axis='columns').copy()
     # Add label for control sessions
     df_sessions['control_recording'] = df_sessions.apply(_label_controls, axis='columns')
-    df_sessions['new_recording'] = df_sessions['start_time'].apply(lambda x: datetime.fromisoformat(x) > datetime(2025, 1, 1))
     # Fetch task protocol timings and add to dataframe
     print("Fetching protocol timings...")
     df_sessions = df_sessions.progress_apply(_fetch_protocol_timings, one=one, axis='columns').copy()
@@ -136,30 +130,6 @@ def _unpack_session_dict(series, one=None):
             # Add number of dropped frames
             if 'dropped_frames' in key:
                 series[key.rstrip('_qc')] = val[1]
-    return series
-
-
-def _check_datasets(series, one=None):
-    """
-    Create a boolean entry for each important dataset for the given eid.
-    """
-    if one is None:
-        one = _get_default_connection()
-    # Fetch list of datasets listed under the given eid
-    datasets = one.list_datasets(series['eid'])
-    # Check each task in the recording
-    for n, protocol in enumerate(series['tasks']):
-        # TODO: handle spontaneous protocol in 2025 recordings!
-        if 'spontaneous' in protocol:
-            continue
-        for dataset in qc_datasets['task']:
-            series[dataset] = dataset in datasets
-    for n in range(series['n_probes']):
-        for dataset in qc_datasets['ephys']:
-            series[dataset] = dataset in datasets
-    # Check if each important dataset is present
-    for dataset in qc_datasets['video']:
-        series[dataset] = dataset in datasets
     return series
 
 

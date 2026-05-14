@@ -27,42 +27,6 @@ paths = {
     'figures': PROJECT_ROOT / Path('figures')
 }
 
-qc_datasets = {
-    'task': [
-        'raw_task_data_00/_iblrig_taskSettings.raw.json',
-        'raw_task_data_00/_iblrig_stimPositionScreen.raw.csv',
-        'alf/task_00/_ibl_passivePeriods.intervalsTable.csv',
-        'raw_task_data_01/_iblrig_taskSettings.raw.json',
-        'raw_task_data_01/_iblrig_stimPositionScreen.raw.csv',
-        'alf/task_01/_ibl_passivePeriods.intervalsTable.csv',
-        'raw_task_data_02/_iblrig_taskSettings.raw.json',
-        'raw_task_data_02/_iblrig_stimPositionScreen.raw.csv'
-        'alf/task_02/_ibl_passivePeriods.intervalsTable.csv',
-        ],
-    'ephys': [
-        'raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec0.sync.npy',
-        'raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec00.sync.npy',
-        'raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec0.ap.cbin',
-        'raw_ephys_data/probe00/_spikeglx_ephysData_g0_t0.imec00.ap.cbin',
-        'alf/probe00/pykilosort/spikes.times.npy',
-        'alf/probe00/iblsorter/spikes.times.npy',
-        'raw_ephys_data/probe01/_spikeglx_ephysData_g0_t0.imec1.sync.npy',
-        'raw_ephys_data/probe01/_spikeglx_ephysData_g0_t0.imec01.sync.npy',
-        'raw_ephys_data/probe01/_spikeglx_ephysData_g0_t0.imec1.ap.cbin',
-        'raw_ephys_data/probe01/_spikeglx_ephysData_g0_t0.imec01.ap.cbin',
-        'alf/probe01/pykilosort/spikes.times.npy',
-        'alf/probe01/iblsorter/spikes.times.npy'
-        ],
-    'video': [
-        'raw_video_data/_iblrig_bodyCamera.raw.mp4',
-        'raw_video_data/_iblrig_bodyCamera.frameData.bin',
-        'raw_video_data/_iblrig_leftCamera.raw.mp4',
-        'raw_video_data/_iblrig_leftCamera.frameData.bin',
-        'raw_video_data/_iblrig_rightCamera.raw.mp4',
-        'raw_video_data/_iblrig_rightCamera.frameData.bin',
-        ]
-}
-
 control_recordings = [
     ['ZFM-08631', '2025-03-21', 'cdc1965e-4324-422a-a9d4-86b4e5d0de92'],
     ['ZFM-08584', '2025-03-19','5c28961e-1183-43f9-86a8-9c1c9d8ed743'],
