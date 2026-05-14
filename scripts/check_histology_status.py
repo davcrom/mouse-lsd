@@ -18,20 +18,22 @@ Valid sessions come from ``psyfun.io.load_sessions``. Output is written to
 REST calls and a directory-listing HTTP GET per subject.
 """
 import argparse
-import re
 
 import pandas as pd
-import requests
 from tqdm import tqdm
 
 from one import params
 from one.api import ONE
 
 from psyfun.config import paths
+from psyfun.histology import (
+    list_histology_tifs,
+    insertion_picks,
+    insertion_alignment_uploaded,
+    insertion_alignment_resolved,
+)
 from psyfun.io import load_sessions
 
-
-HIST_REL = 'histology/{lab}/{subject}/downsampledStacks_25/sample2ARA/'
 
 TODO_TASKS = [
     ('image_stacks', 'TRACE STACKS'),
@@ -39,40 +41,6 @@ TODO_TASKS = [
     ('alignment_uploaded', 'ALIGN'),
     ('alignment_resolved', 'RESOLVE'),
 ]
-
-
-def list_histology_tifs(subject: str, lab: str, par) -> list[str]:
-    """Return the list of ``.tif`` filenames published for ``subject`` in ``lab``.
-
-    Empty list if the directory does not exist or the request fails.
-    """
-    url = f'{par.HTTP_DATA_SERVER}/' + HIST_REL.format(lab=lab, subject=subject)
-    try:
-        r = requests.get(
-            url,
-            auth=(par.HTTP_DATA_SERVER_LOGIN, par.HTTP_DATA_SERVER_PWD),
-            timeout=15,
-        )
-    except requests.RequestException:
-        return []
-    if r.status_code != 200:
-        return []
-    return [m + '.tif' for m in re.findall(r'href="(.*).tif"', r.text)]
-
-
-def insertion_picks(insertion: dict) -> bool:
-    return bool((insertion.get('json') or {}).get('xyz_picks') or [])
-
-
-def insertion_alignment_uploaded(insertion: dict) -> bool:
-    eq = ((insertion.get('json') or {}).get('extended_qc') or {})
-    n = eq.get('alignment_count')
-    return bool(n) and n > 0
-
-
-def insertion_alignment_resolved(insertion: dict) -> bool:
-    eq = ((insertion.get('json') or {}).get('extended_qc') or {})
-    return eq.get('alignment_resolved') is True
 
 
 def status_rows(one: ONE, df_sessions: pd.DataFrame) -> list[dict]:
