@@ -41,16 +41,16 @@ control_recordings = [
 df_controls = pd.DataFrame(data=control_recordings, columns=['subject', 'date', 'eid'])
 
 TASKTIMINGS = [
-    'task_pre_spontaneous_start', 'task_pre_spontaneous_stop',
-    'task_pre_rfm_start', 'task_pre_rfm_stop',
-    'task_pre_replay_start', 'task_pre_replay_stop',
+    'pre_spontaneous_start', 'pre_spontaneous_stop',
+    'pre_rfm_start', 'pre_rfm_stop',
+    'pre_replay_start', 'pre_replay_stop',
     'LSD_admin',
-    'task_post_spontaneous_start', 'task_post_spontaneous_stop',
-    'task_post_rfm_start', 'task_post_rfm_stop',
-    'task_post_replay_start', 'task_post_replay_stop'
+    'post_spontaneous_start', 'post_spontaneous_stop',
+    'post_rfm_start', 'post_rfm_stop',
+    'post_replay_start', 'post_replay_stop'
     ]
 
-PASSIVE_SLOTS = ('task_pre', 'task_post')
+PASSIVE_SLOTS = ('pre', 'post')
 
 postLSD_epoch_length = 5 * 60  # seconds
 postLSD_epoch_starts = np.arange(0, 30, 10) * 60  # seconds

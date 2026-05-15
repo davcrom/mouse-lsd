@@ -79,15 +79,15 @@ def test_canonical_alf_for_two_passive_runs():
     )
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
-    assert result["task_pre_spontaneous_start"] == 50
-    assert result["task_pre_spontaneous_stop"] == 350
-    assert result["task_pre_rfm_start"] == 362
-    assert result["task_pre_rfm_stop"] == 663
-    assert result["task_pre_replay_start"] == 685.0
-    assert result["task_pre_replay_stop"] == 985.3
-    assert result["task_post_spontaneous_start"] == 2916
-    assert result["task_post_replay_start"] == 3551.0
-    assert result["task_post_replay_stop"] == 3848.3
+    assert result["pre_spontaneous_start"] == 50
+    assert result["pre_spontaneous_stop"] == 350
+    assert result["pre_rfm_start"] == 362
+    assert result["pre_rfm_stop"] == 663
+    assert result["pre_replay_start"] == 685.0
+    assert result["pre_replay_stop"] == 985.3
+    assert result["post_spontaneous_start"] == 2916
+    assert result["post_replay_start"] == 3551.0
+    assert result["post_replay_stop"] == 3848.3
 
 
 def test_skip_spontaneous_filler_in_3_task_session():
@@ -122,12 +122,12 @@ def test_skip_spontaneous_filler_in_3_task_session():
     )
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
-    # Filler must NOT populate task_post_*; second passive should land in task_post_*.
-    assert result["task_pre_spontaneous_start"] == 50
+    # Filler must NOT populate post_*; second passive should land in post_*.
+    assert result["pre_spontaneous_start"] == 50
     rig_delta_s = (datetime.fromisoformat("2025-03-11T18:50:00")
                    - datetime.fromisoformat("2025-03-11T18:00:00")).total_seconds()
-    assert result["task_post_spontaneous_start"] == pytest.approx(50 + rig_delta_s)
-    assert result["task_post_replay_start"] == pytest.approx(685.0 + rig_delta_s)
+    assert result["post_spontaneous_start"] == pytest.approx(50 + rig_delta_s)
+    assert result["post_replay_start"] == pytest.approx(685.0 + rig_delta_s)
     # LSD_admin = FPGA time at which the spontaneous filler started.
     filler_delta_s = (datetime.fromisoformat("2025-03-11T18:20:00")
                       - datetime.fromisoformat("2025-03-11T18:00:00")).total_seconds()
@@ -192,9 +192,9 @@ def test_fallback_when_alf_missing_for_second_passive():
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
     rig_delta = 50 * 60.0
-    assert result["task_post_spontaneous_start"] == pytest.approx(50 + rig_delta)
-    assert result["task_post_rfm_start"] == pytest.approx(362 + rig_delta)
-    assert result["task_post_replay_stop"] == pytest.approx(985.3 + rig_delta)
+    assert result["post_spontaneous_start"] == pytest.approx(50 + rig_delta)
+    assert result["post_rfm_start"] == pytest.approx(362 + rig_delta)
+    assert result["post_replay_stop"] == pytest.approx(985.3 + rig_delta)
 
 
 def test_no_alf_anywhere_returns_nan():
@@ -212,8 +212,8 @@ def test_no_alf_anywhere_returns_nan():
     )
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
-    assert "task_pre_spontaneous_start" not in result or pd.isna(
-        result.get("task_pre_spontaneous_start")
+    assert "pre_spontaneous_start" not in result or pd.isna(
+        result.get("pre_spontaneous_start")
     )
 
 
@@ -240,8 +240,8 @@ def test_spontaneous_clipped_to_300s_when_alf_reports_longer():
     )
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
-    assert result["task_pre_spontaneous_start"] == 50
-    assert result["task_pre_spontaneous_stop"] == pytest.approx(50 + 300)
+    assert result["pre_spontaneous_start"] == 50
+    assert result["pre_spontaneous_stop"] == pytest.approx(50 + 300)
 
 
 def test_replay_fallback_when_gabor_missing():
@@ -264,5 +264,5 @@ def test_replay_fallback_when_gabor_missing():
     )
     series = pd.Series({"eid": eid})
     result = io._fetch_protocol_timings(series, one=one)
-    assert result["task_pre_replay_start"] == 675
-    assert result["task_pre_replay_stop"] == pytest.approx(675 + 300)
+    assert result["pre_replay_start"] == 675
+    assert result["pre_replay_stop"] == pytest.approx(675 + 300)
