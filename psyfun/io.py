@@ -480,9 +480,12 @@ def _check_camera(present: set, cam: str, extended_qc: dict) -> dict:
 
 
 @lru_cache(maxsize=None)
-def _check_image_stacks(subject: str, lab: str) -> bool:
-    """True if at least two histology image stacks are published for `subject`."""
-    return len(list_histology_tifs(subject, lab, params.get())) >= 2
+def _check_image_stacks(subject: str, lab: str) -> str:
+    """`'present'` iff both an `*_RD.tif` and an `*_GR.tif` stack are published."""
+    tifs = list_histology_tifs(subject, lab, params.get())
+    has_rd = any(fname.endswith('_RD.tif') for fname in tifs)
+    has_gr = any(fname.endswith('_GR.tif') for fname in tifs)
+    return PRESENT if has_rd and has_gr else MISSING
 
 
 def _check_datasets(series, one=None):

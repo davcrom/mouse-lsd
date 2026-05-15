@@ -346,10 +346,32 @@ def test_check_datasets_data_url_none_is_absent(tmp_path, monkeypatch):
         },
         path_map={eid: tmp_path},
     )
-    monkeypatch.setattr(io, "_check_image_stacks", lambda subject, lab: False)
+    monkeypatch.setattr(io, "_check_image_stacks", lambda subject, lab: io.MISSING)
     series = pd.Series({"eid": eid, "subject": "S", "lab": "L"})
     out = io._check_datasets(series, one=one)
     assert out["pre_intervalsTable"] == io.PRESENT
     assert out["pre_passiveStims"] == io.MISSING
     assert out["pre_passiveGabor"] == io.MISSING
     assert out["post_intervalsTable"] == io.MISSING
+
+
+# --- _check_image_stacks ---------------------------------------------------
+
+def _patch_tifs(monkeypatch, tifs):
+    io._check_image_stacks.cache_clear()
+    monkeypatch.setattr(io, "list_histology_tifs", lambda subject, lab, par: tifs)
+
+
+def test_image_stacks_present_when_rd_and_gr(monkeypatch):
+    _patch_tifs(monkeypatch, ["x_RD.tif", "y_GR.tif"])
+    assert io._check_image_stacks("S", "L") == io.PRESENT
+
+
+def test_image_stacks_missing_when_only_one_suffix(monkeypatch):
+    _patch_tifs(monkeypatch, ["x_RD.tif", "y_RD.tif"])
+    assert io._check_image_stacks("S", "L") == io.MISSING
+
+
+def test_image_stacks_missing_when_empty(monkeypatch):
+    _patch_tifs(monkeypatch, [])
+    assert io._check_image_stacks("S", "L") == io.MISSING
