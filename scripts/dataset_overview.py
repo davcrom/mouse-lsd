@@ -24,9 +24,9 @@ df_sessions['task_ok'] = df_sessions.apply(
     )
 
 # Check for spike sorted data on at least one probe
-ephys_datasets = ['probe00_spikes', 'probe01_spikes']
+ephys_datasets = ['probe00_spikes.times', 'probe01_spikes.times']
 df_sessions['ephys_ok'] = df_sessions.apply(
-    lambda x: any([x[dset] == 'extraction complete' for dset in ephys_datasets]),
+    lambda x: any([x[dset] == 'present' for dset in ephys_datasets]),
     axis='columns'
     )  # note: here we use 'any' rather than 'all', we just need some neurons
 

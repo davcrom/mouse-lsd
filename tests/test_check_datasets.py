@@ -399,3 +399,10 @@ def test_fetch_sessions_drops_unused_alyx_columns(monkeypatch):
     monkeypatch.setattr(io, "_insert_LSD_admin_time", lambda s, df_metadata: s)
     df = io.fetch_sessions(one, save=False)
     assert not {"projects", "lab", "number", "tasks"} & set(df.columns)
+
+
+def test_check_datasets_docstring_references_new_spec():
+    """Module-level spec reference points to `specs/check_session_datasets.md`."""
+    doc = io._check_datasets.__doc__
+    assert "specs/check_session_datasets.md" in doc
+    assert "specs/check_dataset_extraction.md" not in doc

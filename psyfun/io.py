@@ -492,7 +492,7 @@ def _check_image_stacks(subject: str, lab: str) -> str:
 def _check_datasets(series, one=None):
     """Add the 38 registry-based check columns for one session.
 
-    See specs/check_dataset_extraction.md. Dataset presence is read from
+    See specs/check_session_datasets.md. Dataset presence is read from
     the Alyx `sessions/read` field `data_dataset_session_related`: a
     dataset is present when its `(collection, name)` pair has a non-null
     `data_url`.
