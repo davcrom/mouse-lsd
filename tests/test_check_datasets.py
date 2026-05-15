@@ -86,20 +86,20 @@ def test_list_passive_raw_collections_skips_filler():
 
 # --- _check_task_alf -------------------------------------------------------
 
-def test_check_task_alf_complete_and_error():
+def test_check_task_alf_present_and_missing():
     present = {("alf/task_00", "_ibl_passivePeriods.intervalsTable.csv")}
     out = io._check_task_alf(present, 0, "raw_task_data_00")
-    assert out["task_pre_intervalsTable"] == io.EXTRACTION_COMPLETE
-    assert out["task_pre_passiveStims"] == io.EXTRACTION_ERROR
-    assert out["task_pre_passiveGabor"] == io.EXTRACTION_ERROR
+    assert out["pre_intervalsTable"] == io.PRESENT
+    assert out["pre_passiveStims"] == io.MISSING
+    assert out["pre_passiveGabor"] == io.MISSING
 
 
-def test_check_task_alf_raw_missing():
+def test_check_task_alf_no_slot():
     out = io._check_task_alf(set(), 1, None)
     assert set(out) == {
-        "task_post_intervalsTable", "task_post_passiveStims", "task_post_passiveGabor"
+        "post_intervalsTable", "post_passiveStims", "post_passiveGabor"
     }
-    assert all(v == io.RAW_DATA_MISSING for v in out.values())
+    assert all(v == io.MISSING for v in out.values())
 
 
 # --- _pick_sorter / _format_sorter ----------------------------------------
@@ -161,11 +161,11 @@ def test_check_probe_complete(tmp_path):
     dsr = [dsr_entry("spikes.times.npy", "alf/probe00/iblsorter",
                      version="iblsorter_1.9.0")]
     out = io._check_probe(present, dsr, 0, ins, tmp_path)
-    assert out["probe00_raw_ap"] == io.EXTRACTION_COMPLETE
-    assert out["probe00_sync"] == io.EXTRACTION_COMPLETE
+    assert out["probe00_raw_ap"] == io.PRESENT
+    assert out["probe00_sync"] == io.PRESENT
     assert out["probe00_sorter"] == "iblsorter (iblsorter_1.9.0)"
-    assert out["probe00_spikes"] == io.EXTRACTION_COMPLETE
-    assert out["probe00_bombcell"] == io.EXTRACTION_COMPLETE
+    assert out["probe00_spikes"] == io.PRESENT
+    assert out["probe00_bombcell"] == io.PRESENT
 
 
 def test_check_probe_imec_double_digit_form(tmp_path):
@@ -174,26 +174,26 @@ def test_check_probe_imec_double_digit_form(tmp_path):
         ("raw_ephys_data/probe01", "_spikeglx_ephysData_g0_t0.imec01.ap.cbin"),
     }
     out = io._check_probe(present, [], 1, ins, tmp_path)
-    assert out["probe01_raw_ap"] == io.EXTRACTION_COMPLETE
-    # raw present, no sync / sorter / bombcell -> extraction error
-    assert out["probe01_sync"] == io.EXTRACTION_ERROR
+    assert out["probe01_raw_ap"] == io.PRESENT
+    # raw present, derived files absent
+    assert out["probe01_sync"] == io.MISSING
     assert out["probe01_sorter"] == ""
-    assert out["probe01_spikes"] == io.EXTRACTION_ERROR
-    assert out["probe01_bombcell"] == io.EXTRACTION_ERROR
+    assert out["probe01_spikes"] == io.MISSING
+    assert out["probe01_bombcell"] == io.MISSING
 
 
 def test_check_probe_raw_missing(tmp_path):
     ins = {"name": "probe00", "id": "PID0"}
     out = io._check_probe(set(), [], 0, ins, tmp_path)
-    assert out["probe00_raw_ap"] == io.RAW_DATA_MISSING
-    assert out["probe00_sync"] == io.RAW_DATA_MISSING
-    assert out["probe00_spikes"] == io.RAW_DATA_MISSING
-    assert out["probe00_bombcell"] == io.RAW_DATA_MISSING
+    assert out["probe00_raw_ap"] == io.MISSING
+    assert out["probe00_sync"] == io.MISSING
+    assert out["probe00_spikes"] == io.MISSING
+    assert out["probe00_bombcell"] == io.MISSING
 
 
 def test_check_probe_no_insertion():
     out = io._check_probe(set(), [], 1, None, None)
-    assert out["probe01_raw_ap"] == io.RAW_DATA_MISSING
+    assert out["probe01_raw_ap"] == io.MISSING
     assert out["probe01_sorter"] == ""
 
 
@@ -221,8 +221,8 @@ def test_check_camera_qc_and_status():
         # no pin_state entry
     }
     out = io._check_camera(present, "left", extended_qc)
-    assert out["left_camera_raw_video"] == io.EXTRACTION_COMPLETE
-    assert out["left_camera_pose"] == io.EXTRACTION_ERROR
+    assert out["left_camera_raw_video"] == io.PRESENT
+    assert out["left_camera_pose"] == io.MISSING
     assert out["left_camera_dropped_frames"] == "PASS"
     assert out["left_camera_timestamps"] == "WARNING"
     assert out["left_camera_pin_state"] == ""
@@ -230,8 +230,8 @@ def test_check_camera_qc_and_status():
 
 def test_check_camera_raw_missing():
     out = io._check_camera(set(), "body", {})
-    assert out["body_camera_raw_video"] == io.RAW_DATA_MISSING
-    assert out["body_camera_pose"] == io.RAW_DATA_MISSING
+    assert out["body_camera_raw_video"] == io.MISSING
+    assert out["body_camera_pose"] == io.MISSING
     assert out["body_camera_dropped_frames"] == ""
 
 
@@ -293,7 +293,7 @@ def test_check_datasets_data_url_none_is_absent(tmp_path, monkeypatch):
     monkeypatch.setattr(io, "_check_image_stacks", lambda subject, lab: False)
     series = pd.Series({"eid": eid, "subject": "S", "lab": "L"})
     out = io._check_datasets(series, one=one)
-    assert out["task_pre_intervalsTable"] == io.EXTRACTION_COMPLETE
-    assert out["task_pre_passiveStims"] == io.EXTRACTION_ERROR
-    assert out["task_pre_passiveGabor"] == io.EXTRACTION_ERROR
-    assert out["task_post_intervalsTable"] == io.RAW_DATA_MISSING
+    assert out["pre_intervalsTable"] == io.PRESENT
+    assert out["pre_passiveStims"] == io.MISSING
+    assert out["pre_passiveGabor"] == io.MISSING
+    assert out["post_intervalsTable"] == io.MISSING

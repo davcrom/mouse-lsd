@@ -28,10 +28,9 @@ PROTOCOL_SPONTANEOUS_DURATION_S = 300.0  # protocol design: 5 min spontaneous
 PROTOCOL_REPLAY_DURATION_S = 300.0  # protocol design: 5 min gabor replay
 RAW_TASK_COLLECTION_RE = re.compile(r'^raw_task_data_(\d+)$')
 
-# Three-state extraction-status vocabulary used by the dataset check.
-EXTRACTION_COMPLETE = 'extraction complete'
-EXTRACTION_ERROR = 'extraction error'
-RAW_DATA_MISSING = 'raw data missing'
+# Two-state file-presence vocabulary used by the dataset check.
+PRESENT = 'present'
+MISSING = 'missing'
 
 # Task-level alf datasets checked per passive slot.
 TASK_ALF_FILES = {
@@ -42,8 +41,6 @@ TASK_ALF_FILES = {
 # Spike sorters whose output may be registered on Alyx, in priority order:
 # the first sorter with a registered `spikes.times.npy` wins.
 SPIKE_SORTERS = ('iblsorter', 'pykilosort', 'ks2')
-# Spike-data files that must all be present for a probe to count as sorted.
-SPIKE_ALF_FILES = ('spikes.times.npy', 'spikes.clusters.npy', 'clusters.uuids.csv')
 # Bombcell writes this file next to the spike-sorting output on disk.
 BOMBCELL_OUTPUT_FILE = 'templates._bc_qMetrics.parquet'
 
@@ -308,13 +305,6 @@ def _insert_LSD_admin_time(series, df_metadata=None):
     return series
 
 
-def _three_state(present: bool, raw_present: bool) -> str:
-    """Status for an extracted dataset given whether it is present and its raw prereq."""
-    if present:
-        return EXTRACTION_COMPLETE
-    return EXTRACTION_ERROR if raw_present else RAW_DATA_MISSING
-
-
 def _raw_task_collections_from_registry(dsr: list[dict]) -> list[str]:
     """`raw_task_data_NN` collection names in the dataset registry, sorted by NN."""
     matches = {
@@ -345,12 +335,10 @@ def _check_task_alf(present: set, slot: int, raw_col: str | None) -> dict:
     """Status of the three passive-task alf datasets for one passive slot."""
     prefix = PASSIVE_SLOTS[slot]
     if raw_col is None:
-        return {f'{prefix}_{short}': RAW_DATA_MISSING for short in TASK_ALF_FILES}
+        return {f'{prefix}_{short}': MISSING for short in TASK_ALF_FILES}
     alf_col = raw_col.replace('raw_task_data_', 'alf/task_')
     return {
-        f'{prefix}_{short}': _three_state(
-            (alf_col, name) in present, raw_present=True
-        )
+        f'{prefix}_{short}': PRESENT if (alf_col, name) in present else MISSING
         for short, name in TASK_ALF_FILES.items()
     }
 
@@ -405,11 +393,11 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
     prefix = f'probe{slot:02d}'
     if ins is None:
         return {
-            f'{prefix}_raw_ap': RAW_DATA_MISSING,
-            f'{prefix}_sync': RAW_DATA_MISSING,
+            f'{prefix}_raw_ap': MISSING,
+            f'{prefix}_sync': MISSING,
             f'{prefix}_sorter': '',
-            f'{prefix}_spikes': RAW_DATA_MISSING,
-            f'{prefix}_bombcell': RAW_DATA_MISSING,
+            f'{prefix}_spikes': MISSING,
+            f'{prefix}_bombcell': MISSING,
         }
     probe = ins['name']
     raw_col = f'raw_ephys_data/{probe}'
@@ -417,9 +405,10 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
     sync = any((raw_col, name) in present for name in _imec_names('sync.npy', slot))
 
     sorter, revision, version = _pick_sorter(dsr, probe)
+    spike_files = ('spikes.times.npy', 'spikes.clusters.npy', 'clusters.uuids.csv')
     if sorter:
         spikes_present = all(
-            (f'alf/{probe}/{sorter}', name) in present for name in SPIKE_ALF_FILES
+            (f'alf/{probe}/{sorter}', name) in present for name in spike_files
         )
     else:
         spikes_present = False
@@ -429,11 +418,11 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
         / 'bombcell' / BOMBCELL_OUTPUT_FILE
     )
     return {
-        f'{prefix}_raw_ap': EXTRACTION_COMPLETE if raw_ap else RAW_DATA_MISSING,
-        f'{prefix}_sync': _three_state(sync, raw_present=raw_ap),
+        f'{prefix}_raw_ap': PRESENT if raw_ap else MISSING,
+        f'{prefix}_sync': PRESENT if sync else MISSING,
         f'{prefix}_sorter': _format_sorter(sorter, revision, version),
-        f'{prefix}_spikes': _three_state(spikes_present, raw_present=raw_ap),
-        f'{prefix}_bombcell': _three_state(bombcell_path.is_file(), raw_present=raw_ap),
+        f'{prefix}_spikes': PRESENT if spikes_present else MISSING,
+        f'{prefix}_bombcell': PRESENT if bombcell_path.is_file() else MISSING,
     }
 
 
@@ -473,10 +462,8 @@ def _check_camera(present: set, cam: str, extended_qc: dict) -> dict:
     pose = ('alf', f'_ibl_{cam}Camera.lightningPose.pqt') in present
     capcam = cam.capitalize()
     return {
-        f'{prefix}_raw_video': (
-            EXTRACTION_COMPLETE if raw_video else RAW_DATA_MISSING
-        ),
-        f'{prefix}_pose': _three_state(pose, raw_present=raw_video),
+        f'{prefix}_raw_video': PRESENT if raw_video else MISSING,
+        f'{prefix}_pose': PRESENT if pose else MISSING,
         f'{prefix}_dropped_frames': _qc_outcome(
             extended_qc, f'_video{capcam}_dropped_frames'
         ),
