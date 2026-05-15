@@ -232,18 +232,42 @@ def test_check_camera_qc_and_status():
         # no pin_state entry
     }
     out = io._check_camera(present, "left", extended_qc)
-    assert out["left_camera_raw_video"] == io.PRESENT
-    assert out["left_camera_pose"] == io.MISSING
-    assert out["left_camera_dropped_frames"] == "PASS"
-    assert out["left_camera_timestamps"] == "WARNING"
-    assert out["left_camera_pin_state"] == ""
+    assert out["leftCamera.raw"] == io.PRESENT
+    assert out["leftCamera.lightningPose"] == io.MISSING
+    assert out["_videoLeft_dropped_frames"] == "PASS"
+    assert out["_videoLeft_timestamps"] == "WARNING"
+    assert out["_videoLeft_pin_state"] == ""
+
+
+def test_check_camera_timestamps_whitespace_normalised():
+    out = io._check_camera(set(), "left", {"_videoLeft_timestamps": "NOT SET"})
+    assert out["_videoLeft_timestamps"] == "NOT_SET"
 
 
 def test_check_camera_raw_missing():
     out = io._check_camera(set(), "body", {})
-    assert out["body_camera_raw_video"] == io.MISSING
-    assert out["body_camera_pose"] == io.MISSING
-    assert out["body_camera_dropped_frames"] == ""
+    assert out["bodyCamera.raw"] == io.MISSING
+    assert out["bodyCamera.lightningPose"] == io.MISSING
+    assert out["_videoBody_dropped_frames"] == ""
+    assert out["_videoBody_timestamps"] == ""
+    assert out["_videoBody_pin_state"] == ""
+
+
+def test_check_camera_keys_union_across_cameras():
+    keys = set()
+    for cam in ("left", "right", "body"):
+        keys.update(io._check_camera(set(), cam, {}).keys())
+    expected = set()
+    for cam in ("left", "right", "body"):
+        capcam = cam.capitalize()
+        expected.update({f"{cam}Camera.raw", f"{cam}Camera.lightningPose"})
+        expected.update({
+            f"_video{capcam}_dropped_frames",
+            f"_video{capcam}_timestamps",
+            f"_video{capcam}_pin_state",
+        })
+    assert keys == expected
+    assert len(expected) == 15
 
 
 # --- _check_histology_probe ------------------------------------------------

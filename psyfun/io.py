@@ -458,24 +458,25 @@ def _qc_outcome(extended_qc: dict, key: str) -> str:
 
 
 def _check_camera(present: set, cam: str, extended_qc: dict) -> dict:
-    """Status of raw video and pose tracking plus three video-QC outcomes."""
-    prefix = f'{cam}_camera'
+    """Status of raw video and pose tracking plus three video-QC outcomes.
+
+    File-status columns use the raw filename style (`<cam>Camera.raw`,
+    `<cam>Camera.lightningPose`). QC columns are emitted under the verbatim
+    Alyx `extended_qc` keys with whitespace in the outcome string replaced
+    by underscores (e.g. ``'NOT SET'`` → ``'NOT_SET'``).
+    """
     raw_video = ('raw_video_data', f'_iblrig_{cam}Camera.raw.mp4') in present
     pose = ('alf', f'_ibl_{cam}Camera.lightningPose.pqt') in present
     capcam = cam.capitalize()
-    return {
-        f'{prefix}_raw_video': PRESENT if raw_video else MISSING,
-        f'{prefix}_pose': PRESENT if pose else MISSING,
-        f'{prefix}_dropped_frames': _qc_outcome(
-            extended_qc, f'_video{capcam}_dropped_frames'
-        ),
-        f'{prefix}_timestamps': _qc_outcome(
-            extended_qc, f'_video{capcam}_timestamps'
-        ),
-        f'{prefix}_pin_state': _qc_outcome(
-            extended_qc, f'_video{capcam}_pin_state'
-        ),
+    out = {
+        f'{cam}Camera.raw': PRESENT if raw_video else MISSING,
+        f'{cam}Camera.lightningPose': PRESENT if pose else MISSING,
     }
+    for suffix in ('dropped_frames', 'timestamps', 'pin_state'):
+        key = f'_video{capcam}_{suffix}'
+        outcome = _qc_outcome(extended_qc, key)
+        out[key] = re.sub(r'\s+', '_', outcome) if outcome else ''
+    return out
 
 
 @lru_cache(maxsize=None)
