@@ -102,7 +102,7 @@ def test_check_task_alf_no_slot():
     assert all(v == io.MISSING for v in out.values())
 
 
-# --- _pick_sorter / _format_sorter ----------------------------------------
+# --- _pick_sorter ---------------------------------------------------------
 
 def test_pick_sorter_priority_order():
     dsr = [
@@ -111,13 +111,11 @@ def test_pick_sorter_priority_order():
         dsr_entry("spikes.times.npy", "alf/probe00/iblsorter",
                   version="iblsorter_1.9.0"),
     ]
-    assert io._pick_sorter(dsr, "probe00") == (
-        "iblsorter", "", "iblsorter_1.9.0"
-    )
+    assert io._pick_sorter(dsr, "probe00") == ("iblsorter", "iblsorter_1.9.0")
 
 
 def test_pick_sorter_none_registered():
-    assert io._pick_sorter([], "probe00") == ("", "", "")
+    assert io._pick_sorter([], "probe00") == ("", "")
 
 
 def test_pick_sorter_prefers_default_revision():
@@ -129,18 +127,19 @@ def test_pick_sorter_prefers_default_revision():
                   version="pykilosort_ibl_1.4.1"),
     ]
     assert io._pick_sorter(dsr, "probe00") == (
-        "pykilosort", "2025-06-01", "pykilosort_ibl_1.4.1"
+        "pykilosort", "pykilosort_ibl_1.4.1"
     )
 
 
-def test_format_sorter_variants():
-    assert io._format_sorter("", "", "") == ""
-    assert io._format_sorter(
-        "pykilosort", "", "pykilosort_ibl_1.4.1"
-    ) == "pykilosort (pykilosort_ibl_1.4.1)"
-    assert io._format_sorter(
-        "iblsorter", "2025-06-01", "iblsorter_1.9.0"
-    ) == "iblsorter#2025-06-01# (iblsorter_1.9.0)"
+def test_pick_sorter_single_non_default_revision():
+    dsr = [
+        dsr_entry("spikes.times.npy", "alf/probe00/pykilosort",
+                  default_revision="False", revision="2024-01-01",
+                  version="pykilosort_ibl_1.4.1"),
+    ]
+    assert io._pick_sorter(dsr, "probe00") == (
+        "pykilosort", "pykilosort_ibl_1.4.1"
+    )
 
 
 # --- _check_probe ----------------------------------------------------------
@@ -163,7 +162,7 @@ def test_check_probe_complete(tmp_path):
     out = io._check_probe(present, dsr, 0, ins, tmp_path)
     assert out["probe00_ap.cbin"] == io.PRESENT
     assert out["probe00_sync.npy"] == io.PRESENT
-    assert out["probe00_sorter"] == "iblsorter (iblsorter_1.9.0)"
+    assert out["probe00_sorter"] == "iblsorter_1.9.0"
     assert out["probe00_spikes.times"] == io.PRESENT
     assert out["probe00_spikes.clusters"] == io.PRESENT
     assert out["probe00_clusters.uuids"] == io.PRESENT
@@ -208,7 +207,7 @@ def test_check_probe_no_insertion():
     assert out["probe01_sorter"] == ""
 
 
-def test_check_probe_revision_suffix(tmp_path):
+def test_check_probe_sorter_is_version_verbatim(tmp_path):
     ins = {"name": "probe00", "id": "PID0"}
     present = {
         ("raw_ephys_data/probe00", "_spikeglx_ephysData_g0_t0.imec0.ap.cbin"),
@@ -217,9 +216,10 @@ def test_check_probe_revision_suffix(tmp_path):
         ("alf/probe00/iblsorter", "clusters.uuids.csv"),
     }
     dsr = [dsr_entry("spikes.times.npy", "alf/probe00/iblsorter",
+                     default_revision="False",
                      revision="2025-06-01", version="iblsorter_1.9.0")]
     out = io._check_probe(present, dsr, 0, ins, tmp_path)
-    assert out["probe00_sorter"] == "iblsorter#2025-06-01# (iblsorter_1.9.0)"
+    assert out["probe00_sorter"] == "iblsorter_1.9.0"
 
 
 # --- _check_camera ---------------------------------------------------------

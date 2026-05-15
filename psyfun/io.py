@@ -357,14 +357,14 @@ def _imec_names(suffix: str, slot: int) -> list[str]:
     ]
 
 
-def _pick_sorter(dsr: list[dict], probe: str) -> tuple[str, str, str]:
-    """Sorter, revision and version of the spike sorting registered for `probe`.
+def _pick_sorter(dsr: list[dict], probe: str) -> tuple[str, str]:
+    """Sorter name and version string of the spike sorting registered for `probe`.
 
     Walks `SPIKE_SORTERS` in priority order and returns the first sorter
-    with a registered `spikes.times.npy`. Within that sorter, the entry
-    whose `default_revision` is the string `'True'` is preferred (falling
-    back to the first entry). Returns `('', '', '')` when no sorter output
-    is registered.
+    with a registered `spikes.times.npy`. With a single entry it is taken
+    regardless of `default_revision`; with multiple entries the one whose
+    `default_revision == 'True'` is preferred (falling back to the first).
+    Returns `('', '')` when no sorter output is registered.
     """
     for sorter in SPIKE_SORTERS:
         entries = [
@@ -372,25 +372,17 @@ def _pick_sorter(dsr: list[dict], probe: str) -> tuple[str, str, str]:
             if d['name'] == 'spikes.times.npy'
             and d['collection'] == f'alf/{probe}/{sorter}'
         ]
-        if entries:
+        if len(entries) == 1:
+            entry = entries[0]
+        elif entries:
             entry = next(
                 (e for e in entries if e.get('default_revision') == 'True'),
                 entries[0],
             )
-            return sorter, entry.get('revision') or '', entry.get('version') or ''
-    return '', '', ''
-
-
-def _format_sorter(sorter: str, revision: str, version: str) -> str:
-    """`probeNN_sorter` label: name + `#revision#` + ` (version)` when present."""
-    if not sorter:
-        return ''
-    label = sorter
-    if revision:
-        label += f'#{revision}#'
-    if version:
-        label += f' ({version})'
-    return label
+        else:
+            continue
+        return sorter, entry.get('version') or ''
+    return '', ''
 
 
 def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
@@ -410,7 +402,7 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
     raw_ap = any((raw_col, name) in present for name in _imec_names('ap.cbin', slot))
     sync = any((raw_col, name) in present for name in _imec_names('sync.npy', slot))
 
-    sorter, revision, version = _pick_sorter(dsr, probe)
+    sorter, version = _pick_sorter(dsr, probe)
     sorter_col = f'alf/{probe}/{sorter}'
     spike_status = {
         f'{prefix}_{short}': (
@@ -426,7 +418,7 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
     return {
         f'{prefix}_ap.cbin': PRESENT if raw_ap else MISSING,
         f'{prefix}_sync.npy': PRESENT if sync else MISSING,
-        f'{prefix}_sorter': _format_sorter(sorter, revision, version),
+        f'{prefix}_sorter': version,
         **spike_status,
         f'{prefix}_bombcell': PRESENT if bombcell_path.is_file() else MISSING,
     }
