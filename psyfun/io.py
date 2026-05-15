@@ -77,7 +77,6 @@ def fetch_sessions(one, save=True):
     df_sessions = pd.DataFrame(sessions).rename(columns={'id': 'eid'})
     df_sessions['n_probes'] = df_sessions.apply(lambda x: _count_probes(x['eid'], one), axis='columns')
     df_sessions['n_tasks'] = df_sessions['task_protocol'].apply(lambda x: sum(['passive' in task.lower() for task in x.split('_')]))
-    df_sessions['tasks'] = df_sessions.apply(lambda x: x['task_protocol'].split('/'), axis='columns')
     # Check dataset-extraction status against the Alyx dataset registry
     print("Checking datasets...")
     df_sessions = df_sessions.progress_apply(_check_datasets, one=one, axis='columns').copy()
@@ -92,6 +91,8 @@ def fetch_sessions(one, save=True):
     # Label and sort by session number for each subject
     df_sessions['session_n'] = df_sessions.groupby('subject')['start_time'].rank(method='dense').astype(int)
     df_sessions = df_sessions.sort_values(by=['subject', 'start_time']).reset_index(drop=True)
+    # Drop Alyx columns kept only as scratch values during the apply pipeline.
+    df_sessions = df_sessions.drop(columns=['projects', 'lab', 'number'], errors='ignore')
     # Save as csv
     if save:
         df_sessions.to_parquet(paths['sessions'], index=False)
@@ -499,6 +500,9 @@ def _check_datasets(series, one=None):
     if one is None:
         one = _get_default_connection()
     eid = series['eid']
+    # `lab` rides along on the series from sessions/list and is dropped from
+    # df_sessions at the end of fetch_sessions; read it locally here.
+    lab = series['lab']
     session = one.alyx.rest('sessions', 'read', id=eid)
     dsr = session.get('data_dataset_session_related') or []
     extended_qc = session.get('extended_qc') or {}
@@ -519,7 +523,7 @@ def _check_datasets(series, one=None):
         out.update(_check_histology_probe(eid, slot, ins, one))
     for cam in ('left', 'right', 'body'):
         out.update(_check_camera(present, cam, extended_qc))
-    out['image_stacks'] = _check_image_stacks(series['subject'], series['lab'])
+    out['image_stacks'] = _check_image_stacks(series['subject'], lab)
     for key, val in out.items():
         series[key] = val
     return series

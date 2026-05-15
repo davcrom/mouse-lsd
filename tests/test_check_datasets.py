@@ -375,3 +375,27 @@ def test_image_stacks_missing_when_only_one_suffix(monkeypatch):
 def test_image_stacks_missing_when_empty(monkeypatch):
     _patch_tifs(monkeypatch, [])
     assert io._check_image_stacks("S", "L") == io.MISSING
+
+
+# --- fetch_sessions --------------------------------------------------------
+
+def test_fetch_sessions_drops_unused_alyx_columns(monkeypatch):
+    """`projects`, `lab`, `number`, `tasks` are absent from the final df."""
+    sessions_list = [{
+        "id": "E",
+        "subject": "S",
+        "start_time": "2025-03-11T18:00:00",
+        "url": "https://example/E",
+        "task_protocol": "_iblrig_tasks_passiveChoiceWorld/_iblrig_tasks_passiveChoiceWorld",
+        "projects": ["psychedelics"],
+        "lab": "L",
+        "number": 1,
+    }]
+    one = FakeOne(rest_map={("sessions", "list"): sessions_list})
+    monkeypatch.setattr(io, "_count_probes", lambda eid, one: 0)
+    monkeypatch.setattr(io, "_check_datasets", lambda s, one: s)
+    monkeypatch.setattr(io, "_fetch_protocol_timings", lambda s, one: s)
+    monkeypatch.setattr(io, "load_metadata", lambda: pd.DataFrame())
+    monkeypatch.setattr(io, "_insert_LSD_admin_time", lambda s, df_metadata: s)
+    df = io.fetch_sessions(one, save=False)
+    assert not {"projects", "lab", "number", "tasks"} & set(df.columns)
