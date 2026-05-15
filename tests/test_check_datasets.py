@@ -161,10 +161,12 @@ def test_check_probe_complete(tmp_path):
     dsr = [dsr_entry("spikes.times.npy", "alf/probe00/iblsorter",
                      version="iblsorter_1.9.0")]
     out = io._check_probe(present, dsr, 0, ins, tmp_path)
-    assert out["probe00_raw_ap"] == io.PRESENT
-    assert out["probe00_sync"] == io.PRESENT
+    assert out["probe00_ap.cbin"] == io.PRESENT
+    assert out["probe00_sync.npy"] == io.PRESENT
     assert out["probe00_sorter"] == "iblsorter (iblsorter_1.9.0)"
-    assert out["probe00_spikes"] == io.PRESENT
+    assert out["probe00_spikes.times"] == io.PRESENT
+    assert out["probe00_spikes.clusters"] == io.PRESENT
+    assert out["probe00_clusters.uuids"] == io.PRESENT
     assert out["probe00_bombcell"] == io.PRESENT
 
 
@@ -174,26 +176,35 @@ def test_check_probe_imec_double_digit_form(tmp_path):
         ("raw_ephys_data/probe01", "_spikeglx_ephysData_g0_t0.imec01.ap.cbin"),
     }
     out = io._check_probe(present, [], 1, ins, tmp_path)
-    assert out["probe01_raw_ap"] == io.PRESENT
+    assert out["probe01_ap.cbin"] == io.PRESENT
     # raw present, derived files absent
-    assert out["probe01_sync"] == io.MISSING
+    assert out["probe01_sync.npy"] == io.MISSING
     assert out["probe01_sorter"] == ""
-    assert out["probe01_spikes"] == io.MISSING
+    assert out["probe01_spikes.times"] == io.MISSING
+    assert out["probe01_spikes.clusters"] == io.MISSING
+    assert out["probe01_clusters.uuids"] == io.MISSING
     assert out["probe01_bombcell"] == io.MISSING
 
 
 def test_check_probe_raw_missing(tmp_path):
     ins = {"name": "probe00", "id": "PID0"}
     out = io._check_probe(set(), [], 0, ins, tmp_path)
-    assert out["probe00_raw_ap"] == io.MISSING
-    assert out["probe00_sync"] == io.MISSING
-    assert out["probe00_spikes"] == io.MISSING
+    assert out["probe00_ap.cbin"] == io.MISSING
+    assert out["probe00_sync.npy"] == io.MISSING
+    assert out["probe00_spikes.times"] == io.MISSING
+    assert out["probe00_spikes.clusters"] == io.MISSING
+    assert out["probe00_clusters.uuids"] == io.MISSING
     assert out["probe00_bombcell"] == io.MISSING
 
 
 def test_check_probe_no_insertion():
     out = io._check_probe(set(), [], 1, None, None)
-    assert out["probe01_raw_ap"] == io.MISSING
+    assert out["probe01_ap.cbin"] == io.MISSING
+    assert out["probe01_sync.npy"] == io.MISSING
+    assert out["probe01_spikes.times"] == io.MISSING
+    assert out["probe01_spikes.clusters"] == io.MISSING
+    assert out["probe01_clusters.uuids"] == io.MISSING
+    assert out["probe01_bombcell"] == io.MISSING
     assert out["probe01_sorter"] == ""
 
 

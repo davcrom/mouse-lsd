@@ -41,6 +41,12 @@ TASK_ALF_FILES = {
 # Spike sorters whose output may be registered on Alyx, in priority order:
 # the first sorter with a registered `spikes.times.npy` wins.
 SPIKE_SORTERS = ('iblsorter', 'pykilosort', 'ks2')
+# Spike-sorting alf datasets checked per probe (shorthand → dataset filename).
+SPIKE_SORTING_FILES = {
+    'spikes.times': 'spikes.times.npy',
+    'spikes.clusters': 'spikes.clusters.npy',
+    'clusters.uuids': 'clusters.uuids.csv',
+}
 # Bombcell writes this file next to the spike-sorting output on disk.
 BOMBCELL_OUTPUT_FILE = 'templates._bc_qMetrics.parquet'
 
@@ -393,10 +399,10 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
     prefix = f'probe{slot:02d}'
     if ins is None:
         return {
-            f'{prefix}_raw_ap': MISSING,
-            f'{prefix}_sync': MISSING,
+            f'{prefix}_ap.cbin': MISSING,
+            f'{prefix}_sync.npy': MISSING,
             f'{prefix}_sorter': '',
-            f'{prefix}_spikes': MISSING,
+            **{f'{prefix}_{short}': MISSING for short in SPIKE_SORTING_FILES},
             f'{prefix}_bombcell': MISSING,
         }
     probe = ins['name']
@@ -405,23 +411,23 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
     sync = any((raw_col, name) in present for name in _imec_names('sync.npy', slot))
 
     sorter, revision, version = _pick_sorter(dsr, probe)
-    spike_files = ('spikes.times.npy', 'spikes.clusters.npy', 'clusters.uuids.csv')
-    if sorter:
-        spikes_present = all(
-            (f'alf/{probe}/{sorter}', name) in present for name in spike_files
+    sorter_col = f'alf/{probe}/{sorter}'
+    spike_status = {
+        f'{prefix}_{short}': (
+            PRESENT if sorter and (sorter_col, name) in present else MISSING
         )
-    else:
-        spikes_present = False
+        for short, name in SPIKE_SORTING_FILES.items()
+    }
 
     bombcell_path = (
         session_path / 'spike_sorters' / sorter / probe
         / 'bombcell' / BOMBCELL_OUTPUT_FILE
     )
     return {
-        f'{prefix}_raw_ap': PRESENT if raw_ap else MISSING,
-        f'{prefix}_sync': PRESENT if sync else MISSING,
+        f'{prefix}_ap.cbin': PRESENT if raw_ap else MISSING,
+        f'{prefix}_sync.npy': PRESENT if sync else MISSING,
         f'{prefix}_sorter': _format_sorter(sorter, revision, version),
-        f'{prefix}_spikes': PRESENT if spikes_present else MISSING,
+        **spike_status,
         f'{prefix}_bombcell': PRESENT if bombcell_path.is_file() else MISSING,
     }
 
