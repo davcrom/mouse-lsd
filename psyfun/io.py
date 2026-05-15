@@ -425,20 +425,24 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
 
 
 def _check_histology_probe(eid: str, slot: int, ins: dict | None, one) -> dict:
-    """Histology-pipeline progress booleans for one probe slot."""
-    prefix = f'probe{slot:02d}'
+    """Highest histology-pipeline state reached for one probe slot.
+
+    One of `'resolved'`, `'aligned'`, `'traced'`, `'no-tracing'`, `'missing'`.
+    `'missing'` iff the probe slot has no insertion.
+    """
+    key = f'probe{slot:02d}_histology'
     if ins is None:
-        return {
-            f'{prefix}_traced': False,
-            f'{prefix}_alignment_uploaded': False,
-            f'{prefix}_alignment_resolved': False,
-        }
+        return {key: 'missing'}
     full = one.alyx.rest('insertions', 'list', id=ins['id'], no_cache=True)[0]
-    return {
-        f'{prefix}_traced': insertion_picks(full),
-        f'{prefix}_alignment_uploaded': insertion_alignment_uploaded(full),
-        f'{prefix}_alignment_resolved': insertion_alignment_resolved(full),
-    }
+    if insertion_alignment_resolved(full):
+        state = 'resolved'
+    elif insertion_alignment_uploaded(full):
+        state = 'aligned'
+    elif insertion_picks(full):
+        state = 'traced'
+    else:
+        state = 'no-tracing'
+    return {key: state}
 
 
 def _qc_outcome(extended_qc: dict, key: str) -> str:

@@ -248,8 +248,43 @@ def test_check_camera_raw_missing():
 
 # --- _check_histology_probe ------------------------------------------------
 
-def test_check_histology_probe_traced_and_resolved():
-    eid = "E"
+def _hist_one(full: dict) -> "FakeOne":
+    return FakeOne(rest_map={("insertions", "list"): [full]})
+
+
+def test_check_histology_probe_missing_when_no_insertion():
+    out = io._check_histology_probe("E", 1, None, FakeOne())
+    assert out == {"probe01_histology": "missing"}
+
+
+def test_check_histology_probe_no_tracing_when_xyz_picks_empty():
+    ins = {"name": "probe00", "id": "PID0"}
+    full = {"id": "PID0", "json": {"xyz_picks": [], "extended_qc": {}}}
+    out = io._check_histology_probe("E", 0, ins, _hist_one(full))
+    assert out == {"probe00_histology": "no-tracing"}
+
+
+def test_check_histology_probe_traced_when_picks_only():
+    ins = {"name": "probe00", "id": "PID0"}
+    full = {"id": "PID0", "json": {"xyz_picks": [[1, 2, 3]], "extended_qc": {}}}
+    out = io._check_histology_probe("E", 0, ins, _hist_one(full))
+    assert out == {"probe00_histology": "traced"}
+
+
+def test_check_histology_probe_aligned_when_alignment_count_only():
+    ins = {"name": "probe00", "id": "PID0"}
+    full = {
+        "id": "PID0",
+        "json": {
+            "xyz_picks": [[1, 2, 3]],
+            "extended_qc": {"alignment_count": 2},
+        },
+    }
+    out = io._check_histology_probe("E", 0, ins, _hist_one(full))
+    assert out == {"probe00_histology": "aligned"}
+
+
+def test_check_histology_probe_resolved_wins():
     ins = {"name": "probe00", "id": "PID0"}
     full = {
         "id": "PID0",
@@ -258,22 +293,8 @@ def test_check_histology_probe_traced_and_resolved():
             "extended_qc": {"alignment_count": 2, "alignment_resolved": True},
         },
     }
-    one = FakeOne(rest_map={("insertions", "list"): [full]})
-    out = io._check_histology_probe(eid, 0, ins, one)
-    assert out == {
-        "probe00_traced": True,
-        "probe00_alignment_uploaded": True,
-        "probe00_alignment_resolved": True,
-    }
-
-
-def test_check_histology_probe_no_insertion():
-    out = io._check_histology_probe("E", 1, None, FakeOne())
-    assert out == {
-        "probe01_traced": False,
-        "probe01_alignment_uploaded": False,
-        "probe01_alignment_resolved": False,
-    }
+    out = io._check_histology_probe("E", 0, ins, _hist_one(full))
+    assert out == {"probe00_histology": "resolved"}
 
 
 # --- _check_datasets -------------------------------------------------------
