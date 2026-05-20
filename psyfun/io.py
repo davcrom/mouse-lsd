@@ -396,7 +396,7 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
             f'{prefix}_sync.npy': MISSING,
             f'{prefix}_sorter': '',
             **{f'{prefix}_{short}': MISSING for short in SPIKE_SORTING_FILES},
-            f'{prefix}_bombcell': MISSING,
+            f'{prefix}_bombcell_GOOD': np.nan,
         }
     probe = ins['name']
     raw_col = f'raw_ephys_data/{probe}'
@@ -416,12 +416,17 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
         session_path / 'spike_sorters' / sorter / probe
         / 'bombcell' / BOMBCELL_OUTPUT_FILE
     )
+    if bombcell_path.is_file():
+        bc = pd.read_parquet(bombcell_path)
+        good_proportion = (bc['bc_unitType'] == 'GOOD').mean()
+    else:
+        good_proportion = np.nan
     return {
         f'{prefix}_ap.cbin': PRESENT if raw_ap else MISSING,
         f'{prefix}_sync.npy': PRESENT if sync else MISSING,
         f'{prefix}_sorter': version,
         **spike_status,
-        f'{prefix}_bombcell': PRESENT if bombcell_path.is_file() else MISSING,
+        f'{prefix}_bombcell_GOOD': good_proportion,
     }
 
 

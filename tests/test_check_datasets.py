@@ -1,4 +1,6 @@
 """Tests for psyfun.io._check_datasets and its per-modality helpers."""
+import math
+
 import pandas as pd
 import pytest
 
@@ -149,7 +151,7 @@ def test_check_probe_complete(tmp_path):
     bombcell = (tmp_path / "spike_sorters" / "iblsorter" / "probe00"
                 / "bombcell" / io.BOMBCELL_OUTPUT_FILE)
     bombcell.parent.mkdir(parents=True)
-    bombcell.write_text("x")
+    pd.DataFrame({"bc_unitType": ["GOOD", "MUA", "NOISE"]}).to_parquet(bombcell)
     present = {
         ("raw_ephys_data/probe00", "_spikeglx_ephysData_g0_t0.imec0.ap.cbin"),
         ("raw_ephys_data/probe00", "_spikeglx_ephysData_g0_t0.imec0.sync.npy"),
@@ -166,7 +168,8 @@ def test_check_probe_complete(tmp_path):
     assert out["probe00_spikes.times"] == io.PRESENT
     assert out["probe00_spikes.clusters"] == io.PRESENT
     assert out["probe00_clusters.uuids"] == io.PRESENT
-    assert out["probe00_bombcell"] == io.PRESENT
+    assert out["probe00_bombcell_GOOD"] == 1 / 3
+    assert "probe00_bombcell" not in out
 
 
 def test_check_probe_imec_double_digit_form(tmp_path):
@@ -182,7 +185,7 @@ def test_check_probe_imec_double_digit_form(tmp_path):
     assert out["probe01_spikes.times"] == io.MISSING
     assert out["probe01_spikes.clusters"] == io.MISSING
     assert out["probe01_clusters.uuids"] == io.MISSING
-    assert out["probe01_bombcell"] == io.MISSING
+    assert math.isnan(out["probe01_bombcell_GOOD"])
 
 
 def test_check_probe_raw_missing(tmp_path):
@@ -193,7 +196,7 @@ def test_check_probe_raw_missing(tmp_path):
     assert out["probe00_spikes.times"] == io.MISSING
     assert out["probe00_spikes.clusters"] == io.MISSING
     assert out["probe00_clusters.uuids"] == io.MISSING
-    assert out["probe00_bombcell"] == io.MISSING
+    assert math.isnan(out["probe00_bombcell_GOOD"])
 
 
 def test_check_probe_no_insertion():
@@ -203,7 +206,7 @@ def test_check_probe_no_insertion():
     assert out["probe01_spikes.times"] == io.MISSING
     assert out["probe01_spikes.clusters"] == io.MISSING
     assert out["probe01_clusters.uuids"] == io.MISSING
-    assert out["probe01_bombcell"] == io.MISSING
+    assert math.isnan(out["probe01_bombcell_GOOD"])
     assert out["probe01_sorter"] == ""
 
 
