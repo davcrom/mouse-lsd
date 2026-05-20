@@ -430,15 +430,17 @@ def _check_probe(present: set, dsr: list[dict], slot: int, ins: dict | None,
     }
 
 
-def _check_histology_probe(eid: str, slot: int, ins: dict | None, one) -> dict:
+def _check_histology_probe(eid: str, slot: int, ins: dict | None, one,
+                           stacks_present: bool) -> dict:
     """Highest histology-pipeline state reached for one probe slot.
 
-    One of `'resolved'`, `'aligned'`, `'traced'`, `'no-tracing'`, `'missing'`.
-    `'missing'` iff the probe slot has no insertion.
+    One of `'resolved'`, `'aligned'`, `'traced'`, `'no-tracing'`,
+    `'no-stacks'`, `'no-insertion'`. `'no-insertion'` iff the probe slot has
+    no insertion; `'no-stacks'` vs `'no-tracing'` is gated by `stacks_present`.
     """
     key = f'probe{slot:02d}_histology'
     if ins is None:
-        return {key: 'missing'}
+        return {key: 'no-insertion'}
     full = one.alyx.rest('insertions', 'list', id=ins['id'], no_cache=True)[0]
     if insertion_alignment_resolved(full):
         state = 'resolved'
@@ -446,8 +448,10 @@ def _check_histology_probe(eid: str, slot: int, ins: dict | None, one) -> dict:
         state = 'aligned'
     elif insertion_picks(full):
         state = 'traced'
-    else:
+    elif stacks_present:
         state = 'no-tracing'
+    else:
+        state = 'no-stacks'
     return {key: state}
 
 
@@ -495,7 +499,7 @@ def _check_image_stacks(subject: str, lab: str) -> str:
 
 
 def _check_datasets(series, one=None):
-    """Add the 38 registry-based check columns for one session.
+    """Add the 37 registry-based check columns for one session.
 
     See specs/check_session_datasets.md. Dataset presence is read from
     the Alyx `sessions/read` field `data_dataset_session_related`: a
@@ -522,13 +526,13 @@ def _check_datasets(series, one=None):
         key=lambda ins: ins['name'],
     )
     session_path = one.eid2path(eid)
+    stacks_present = _check_image_stacks(series['subject'], lab) == PRESENT
     for slot in (0, 1):
         ins = insertions[slot] if slot < len(insertions) else None
         out.update(_check_probe(present, dsr, slot, ins, session_path))
-        out.update(_check_histology_probe(eid, slot, ins, one))
+        out.update(_check_histology_probe(eid, slot, ins, one, stacks_present))
     for cam in ('left', 'right', 'body'):
         out.update(_check_camera(present, cam, extended_qc))
-    out['image_stacks'] = _check_image_stacks(series['subject'], lab)
     for key, val in out.items():
         series[key] = val
     return series

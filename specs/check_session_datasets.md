@@ -2,22 +2,30 @@
 
 ## Status
 
-Implemented (2026-05-15)
+Implemented (2026-05-20) — bombcell-proportion + histology-state revision of
+the 2026-05-15 schema. Prior schema implemented 2026-05-15.
 
 Supersedes `specs/check_dataset_extraction.md` (implemented 2026-05-14,
-commits `e808962`..`7b8b3e0`). This revision keeps the registry-based
-mechanism introduced there and changes the column schema: drops Alyx
-columns the project does not use, renames task timing and dataset
-columns to a uniform shorthand convention, simplifies the file-status
-vocabulary to two values, and replaces the four histology columns per
-probe with a single ordered-state column.
+commits `e808962`..`7b8b3e0`). The 2026-05-15 revision kept the
+registry-based mechanism introduced there and changed the column schema:
+dropped Alyx columns the project does not use, renamed task timing and
+dataset columns to a uniform shorthand convention, simplified the
+file-status vocabulary to two values, and replaced the four histology
+columns per probe with a single ordered-state column.
+
+This revision changes two of those columns: `probeNN_bombcell` (a
+present/missing flag) becomes `probeNN_bombcell_GOOD`, a float fraction
+of GOOD units; the session-level `image_stacks` column is removed and
+its signal absorbed into `probeNN_histology` as a new `'no-stacks'`
+state, with `'missing'` renamed `'no-insertion'`.
 
 ## Problem
 
 `sessions.pqt` needs one set of columns that says, per session, which
-data files exist — task alf, raw ephys, spike sorting, raw video, pose,
-bombcell, histology image stacks — so the table is a single source of
-truth for what data is available. The columns must be queryable by
+data files exist — task alf, raw ephys, spike sorting, raw video, pose —
+plus a per-probe bombcell GOOD-unit fraction and per-probe histology
+pipeline state, so the table is a single source of truth for what data is
+available. The columns must be queryable by
 dataset name with a `*<shorthand>*` glob so a single column name maps
 unambiguously to the underlying dataset.
 
@@ -65,6 +73,9 @@ the derived `tasks` list) are unused downstream.
 ### Local filesystem
 
 - Bombcell output: `one.eid2path(eid) / 'spike_sorters' / <sorter> / <probe> / 'bombcell' / 'templates._bc_qMetrics.parquet'`.
+  Read as a parquet. Verified to contain a `bc_unitType` column with
+  string values in `{'GOOD', 'NON-SOMA', 'MUA', 'NOISE', ''}`, one row
+  per detected unit.
 
 ### Data server
 
@@ -159,14 +170,15 @@ Slots `probe00`, `probe01`.
 | `probeNN_spikes.clusters` | `spikes.clusters.npy` in `alf/probeNN/<sorter>` |
 | `probeNN_clusters.uuids` | `clusters.uuids.csv` in `alf/probeNN/<sorter>` |
 | `probeNN_sorter` | registry `version` string verbatim (e.g. `pykilosort_ibl_1.4.1`); `''` if no sorting registered |
-| `probeNN_bombcell` | local `templates._bc_qMetrics.parquet` presence |
-| `probeNN_histology` | one of `'resolved'`, `'aligned'`, `'traced'`, `'no-tracing'`, `'missing'` |
+| `probeNN_bombcell_GOOD` | float in `[0, 1]`: fraction of detected units labelled `GOOD` in `templates._bc_qMetrics.parquet`; `NaN` if the file is absent or the slot has no insertion |
+| `probeNN_histology` | one of `'resolved'`, `'aligned'`, `'traced'`, `'no-tracing'`, `'no-stacks'`, `'no-insertion'` |
 
 `probeNN_ap.cbin`, `probeNN_sync.npy`, `probeNN_spikes.times`,
-`probeNN_spikes.clusters`, `probeNN_clusters.uuids`, `probeNN_bombcell`
-are `'present'`/`'missing'`. When the probe slot has no insertion, all
-six are `'missing'`, `probeNN_sorter` is `''`, and `probeNN_histology`
-is `'missing'`.
+`probeNN_spikes.clusters`, `probeNN_clusters.uuids` are
+`'present'`/`'missing'`. `probeNN_bombcell_GOOD` is a float column.
+When the probe slot has no insertion, the five file-status columns are
+`'missing'`, `probeNN_sorter` is `''`, `probeNN_bombcell_GOOD` is `NaN`,
+and `probeNN_histology` is `'no-insertion'`.
 
 ### Video (6 columns)
 
@@ -202,13 +214,12 @@ element is the outcome; `_timestamps` holds the outcome string
 directly. Empty string when `extended_qc` is absent or has no entry
 for the key.
 
-### Session-level histology (1 column)
+### Session-level histology
 
-| column | content |
-|---|---|
-| `image_stacks` | `'present'` iff `list_histology_tifs(subject, lab, par)` returns at least one filename matching `*_RD.tif` AND at least one matching `*_GR.tif`; else `'missing'` |
-
-Value is per-subject; identical across all sessions of the same subject.
+No session-level histology column. Image-stack presence is no longer its
+own column; it gates the per-probe `probeNN_histology` state (`'no-stacks'`
+vs `'no-tracing'`). The `_check_image_stacks` helper survives and feeds
+that gating.
 
 ## Behavior
 
@@ -227,9 +238,10 @@ present = {
 A dataset is present if its `(collection, name)` pair is in `present`.
 The full entries are also keyed by `(collection, name)` so the ephys
 check can read `version`, `revision`, and `default_revision`. Every
-file-status cell is `'present'` if its dataset (or local file, for
-bombcell) is present, `'missing'` otherwise. There is no raw-prerequisite
-distinction.
+file-status cell is `'present'` if its dataset is present, `'missing'`
+otherwise. There is no raw-prerequisite distinction.
+`probeNN_bombcell_GOOD` is the one ephys column read from the local
+filesystem rather than the registry (see Ephys per probe).
 
 ### Task slots
 
@@ -251,7 +263,7 @@ has no passive run, its three columns are `'missing'`.
 Enumerate probe slots from `one.alyx.rest('insertions', 'list', session=eid)`,
 sorted by `name`; slot 0 / 1 → column prefix `probe00` / `probe01`. When
 a slot has no insertion, write all file-status columns `'missing'`,
-`sorter = ''`, `histology = 'missing'`.
+`sorter = ''`, `bombcell_GOOD = NaN`, `histology = 'no-insertion'`.
 
 For a probe with insertion record `ins`:
 
@@ -263,10 +275,14 @@ For a probe with insertion record `ins`:
   check the three files in `alf/<probe>/<sorter>`:
   `spikes.times.npy`, `spikes.clusters.npy`, `clusters.uuids.csv`.
   Each is its own column.
-- `probeNN_bombcell` : `'present'` if the file
-  `one.eid2path(eid) / 'spike_sorters' / <sorter> / <probe> / 'bombcell' / 'templates._bc_qMetrics.parquet'`
-  exists locally. With `<sorter> = ''`, the file will not be found, and
-  the column is `'missing'`.
+- `probeNN_bombcell_GOOD` : build the path
+  `one.eid2path(eid) / 'spike_sorters' / <sorter> / <probe> / 'bombcell' / 'templates._bc_qMetrics.parquet'`.
+  If it does not exist (including when `<sorter> = ''`), the value is
+  `NaN`. If it exists, read the parquet and compute
+  `(df['bc_unitType'] == 'GOOD').mean()` over all rows — the denominator
+  is the total number of detected units, including rows whose
+  `bc_unitType` is the empty string. No `bombcell` import is needed; the
+  `bc_unitType` column is already in the parquet.
 
 **Sorter selection.**
 
@@ -284,18 +300,25 @@ For a probe with insertion record `ins`:
    is empty or no sorter has a registered `spikes.times.npy`,
    `probeNN_sorter = ''`.
 
-**Histology state** for a probe with insertion `ins`:
+**Histology state.** `_check_histology_probe` takes a `stacks_present:
+bool` argument (the subject's image-stack presence, computed once per
+session by `_check_datasets`). Evaluation order, first match wins:
 
-| state | predicate (in evaluation order, highest reached wins) |
+| state | predicate |
 |---|---|
-| `'resolved'` | `insertion_alignment_resolved(ins)` |
-| `'aligned'`  | `insertion_alignment_uploaded(ins)` |
-| `'traced'`   | `insertion_picks(ins)` |
-| `'no-tracing'` | insertion exists but `insertion_picks(ins)` is False |
-| `'missing'`  | no insertion in this slot |
+| `'no-insertion'` | no insertion in this slot (`ins is None`) |
+| `'resolved'` | `insertion_alignment_resolved(full)` |
+| `'aligned'`  | `insertion_alignment_uploaded(full)` |
+| `'traced'`   | `insertion_picks(full)` |
+| `'no-tracing'` | insertion exists, no picks, `stacks_present` is True |
+| `'no-stacks'` | insertion exists, no picks, `stacks_present` is False |
 
-Predicates are `psyfun.histology.insertion_picks`,
-`insertion_alignment_uploaded`, `insertion_alignment_resolved`.
+`no-insertion` is checked first, so it supersedes `no-stacks` when a slot
+has neither insertion nor stacks. The Alyx record `full` is fetched
+(`one.alyx.rest('insertions', 'list', id=ins['id'], no_cache=True)[0]`)
+only when `ins is not None`. Predicates are
+`psyfun.histology.insertion_picks`, `insertion_alignment_uploaded`,
+`insertion_alignment_resolved`.
 
 ### Video per camera
 
@@ -310,12 +333,15 @@ Video QC cells come from `extended_qc[key]`:
 is the outcome string; `_timestamps` values are the outcome string
 directly. Missing key or missing `extended_qc` → empty string.
 
-### Session-level histology
+### Image-stack gating
 
-`list_histology_tifs(subject, lab, par)` returns `.tif` filenames at the
-subject's `downsampledStacks_25/sample2ARA/` directory. `image_stacks =
-'present'` iff at least one filename matches `*_RD.tif` and at least one
-matches `*_GR.tif`; else `'missing'`. Cached per `(subject, lab)`.
+`_check_image_stacks(subject, lab)` returns `'present'` iff
+`list_histology_tifs(subject, lab, par)` returns at least one filename
+matching `*_RD.tif` and at least one matching `*_GR.tif`; else
+`'missing'`. Cached per `(subject, lab)`. `_check_datasets` computes
+`stacks_present = _check_image_stacks(subject, lab) == 'present'` once per
+session and passes it into each `_check_histology_probe` call. No
+`image_stacks` column is written.
 
 ### Producer pipeline
 
@@ -337,9 +363,10 @@ query Alyx for project+protocol
 `extended_qc` and `data_dataset_session_related`. Its helpers
 (`_check_task_alf`, `_check_probe`, `_check_camera`,
 `_check_image_stacks`, `_check_histology_probe`) realise the per-section
-behavior above. `_list_passive_raw_collections` derives
-`raw_task_data_NN` collection names from `data_dataset_session_related`
-(not `one.list_datasets`).
+behavior above; `_check_image_stacks` now feeds the per-probe histology
+gating instead of writing its own column. `_list_passive_raw_collections`
+derives `raw_task_data_NN` collection names from
+`data_dataset_session_related` (not `one.list_datasets`).
 
 ### Consumer updates
 
@@ -354,7 +381,7 @@ the new schema in the same change:
   `specs/check_dataset_extraction.md` → `specs/check_session_datasets.md`.
 - `scripts/dataset_overview.py` — reads columns by their new names;
   renders the two-state vocabulary, the `probeNN_sorter` version
-  string, the five-state `probeNN_histology`, and the verbatim
+  string, the `probeNN_histology` states, and the verbatim
   `_video*_*` QC keys.
 - `scripts/fetch_data.py` — reads the new file-status columns when
   deciding what to download.
@@ -363,6 +390,25 @@ the new schema in the same change:
   RD+GR rule.
 - `tests/test_fetch_protocol_timings.py` — assertions on the renamed
   timing columns (`pre_*` / `post_*`).
+
+Bombcell-proportion + histology-state revision (scope: `psyfun/io.py`
+and `tests/test_check_datasets.py` only — grep confirms no script reads
+`probeNN_bombcell`, `image_stacks`, or the `probeNN_histology` state
+values):
+
+- `psyfun/io.py` — `_check_probe` emits `probeNN_bombcell_GOOD` (the
+  proportion / `NaN`) in place of `probeNN_bombcell`;
+  `_check_histology_probe` gains the `stacks_present` argument and the
+  six-state ladder; `_check_datasets` computes `stacks_present` once and
+  drops the `image_stacks` output assignment.
+- `tests/test_check_datasets.py` — `_check_probe` tests write a real
+  parquet with a `bc_unitType` column (the prior `bombcell.write_text("x")`
+  fixture is not a parquet) and assert the GOOD fraction / `NaN`;
+  `_check_histology_probe` tests adopt the new signature, rename the
+  no-insertion expectation to `'no-insertion'`, and add a `'no-stacks'`
+  case; the `_check_datasets` test drops any `image_stacks` output
+  assertion (its `_check_image_stacks` monkeypatch stays); the
+  `_check_image_stacks` unit tests are unchanged.
 
 ## Out of scope
 
@@ -377,7 +423,8 @@ Functional gaps:
 Adjacent artefacts not modified:
 
 - The aggregated `data/bombcell.pqt` output of `scripts/unit_qc.py`.
-  `probeNN_bombcell` checks the per-probe bombcell directory on disk.
+  `probeNN_bombcell_GOOD` reads the per-probe bombcell parquet on disk,
+  not this aggregated table; there is no fallback to `data/units.pqt`.
 - `scripts/check_histology_status.py` and its output
   `metadata/histology_status.pqt`. The script calls `load_sessions`
   but does not read any of the columns renamed by this spec.
@@ -400,6 +447,18 @@ Spec file lifecycle:
 - The prior spec `specs/check_dataset_extraction.md` is left in place
   with its `Status: Implemented` header intact; this file supersedes
   it. Deleting the prior spec is the user's call, not this change.
+
+## Implementation plan
+
+Bombcell-proportion + histology-state revision:
+
+- `tickets/10-bombcell-good-proportion-column.md` — `_check_probe` emits
+  `probeNN_bombcell_GOOD` (float fraction of GOOD units / `NaN`).
+- `tickets/11-histology-six-states-drop-image-stacks.md` —
+  `_check_histology_probe` six-state ladder with `stacks_present` arg;
+  `_check_datasets` drops the `image_stacks` column.
+
+(The 01–09 tickets implemented the prior 2026-05-15 schema.)
 
 ## Decisions
 
@@ -443,15 +502,45 @@ Spec file lifecycle:
   Source: user. Empty string when no sorter is registered. No
   parenthesised sorter-name + version format.
 - **Single `probeNN_histology` ordered-state column.** Source: user.
-  The three boolean predicates are sequential and blocking: alignment
-  cannot be uploaded without tracing, cannot be resolved without
-  alignment. Compressing them to one ordered-state column captures
-  every distinction the four booleans did. States: `'resolved'` >
-  `'aligned'` > `'traced'` > `'no-tracing'` (insertion exists, no
-  picks) > `'missing'` (no insertion).
-- **`image_stacks` requires both `*_RD.tif` and `*_GR.tif`.** Source:
-  user. The previous `>= 2` threshold was a proxy for the same
-  intent; checking the colour-channel suffixes is direct.
+  The boolean predicates are sequential and blocking: stacks gate
+  tracing, alignment cannot be uploaded without tracing, cannot be
+  resolved without alignment. Compressing them to one ordered-state
+  column captures every distinction the booleans did. States, highest
+  reached wins: `'resolved'` > `'aligned'` > `'traced'` >
+  `'no-tracing'` (insertion + stacks, no picks) > `'no-stacks'`
+  (insertion, no stacks) > `'no-insertion'` (no insertion).
+- **Image-stack state folded into `probeNN_histology`, `image_stacks`
+  column removed.** Source: user, this revision. Stacks are the first
+  histology-pipeline step (they gate tracing), so the per-subject
+  signal belongs in the per-probe state ladder as `'no-stacks'` rather
+  than a separate session-level column. No consumer reads `image_stacks`.
+- **`'no-tracing'` kept as a distinct rung.** Source: user. "Insertion +
+  stacks present, not yet traced" is the actionable TRACE-PICKS step and
+  is distinct from `'no-stacks'` (cannot trace) and `'traced'`; the user
+  chose to keep it rather than collapse.
+- **`'no-insertion'` checked first.** Source: user. The insertion
+  precedes stacks in the pipeline, so a missing insertion supersedes a
+  missing stack; renamed from the prior `'missing'` for clarity.
+- **`image_stacks` rule (both `*_RD.tif` and `*_GR.tif`) unchanged.**
+  Source: user. The previous `>= 2` threshold was a proxy for the same
+  intent; checking the colour-channel suffixes is direct. The helper
+  survives to gate the histology state.
+- **`probeNN_bombcell_GOOD` = fraction of GOOD units.** Source: user,
+  this revision. Numerator is `bc_unitType == 'GOOD'` only (excludes
+  `NON-SOMA`); denominator is the total number of detected units (every
+  row of the qMetrics parquet, including empty-label rows). Replaces the
+  present/missing flag, whose information (file exists) is subsumed by
+  a non-`NaN` value.
+- **Read the proportion from the already-checked qMetrics parquet.**
+  Source: verified — `templates._bc_qMetrics.parquet` carries the
+  `bc_unitType` column, so the proportion is a plain parquet read and
+  avoids adding a `bombcell` dependency to session building.
+- **`NaN`, not a sentinel string, for absent bombcell / no insertion.**
+  Source: user — "NaN is fine, clean float column." Keeps the column a
+  clean float dtype.
+- **No fallback to `units.pqt` for the proportion.** Source: user — the
+  ONE cache is ground truth. The current `units.pqt` has no `bc_label`
+  column anyway, so a fallback would be ill-defined.
 - **Sorter priority `iblsorter > pykilosort > ks2`, then
   `default_revision == 'True'`.** Carried from the prior spec
   (`check_dataset_extraction.md`). Most sessions have a single sorter.

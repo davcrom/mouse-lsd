@@ -279,22 +279,29 @@ def _hist_one(full: dict) -> "FakeOne":
     return FakeOne(rest_map={("insertions", "list"): [full]})
 
 
-def test_check_histology_probe_missing_when_no_insertion():
-    out = io._check_histology_probe("E", 1, None, FakeOne())
-    assert out == {"probe01_histology": "missing"}
+def test_check_histology_probe_no_insertion():
+    out = io._check_histology_probe("E", 1, None, FakeOne(), False)
+    assert out == {"probe01_histology": "no-insertion"}
+
+
+def test_check_histology_probe_no_stacks_when_picks_empty_and_no_stacks():
+    ins = {"name": "probe00", "id": "PID0"}
+    full = {"id": "PID0", "json": {"xyz_picks": [], "extended_qc": {}}}
+    out = io._check_histology_probe("E", 0, ins, _hist_one(full), False)
+    assert out == {"probe00_histology": "no-stacks"}
 
 
 def test_check_histology_probe_no_tracing_when_xyz_picks_empty():
     ins = {"name": "probe00", "id": "PID0"}
     full = {"id": "PID0", "json": {"xyz_picks": [], "extended_qc": {}}}
-    out = io._check_histology_probe("E", 0, ins, _hist_one(full))
+    out = io._check_histology_probe("E", 0, ins, _hist_one(full), True)
     assert out == {"probe00_histology": "no-tracing"}
 
 
 def test_check_histology_probe_traced_when_picks_only():
     ins = {"name": "probe00", "id": "PID0"}
     full = {"id": "PID0", "json": {"xyz_picks": [[1, 2, 3]], "extended_qc": {}}}
-    out = io._check_histology_probe("E", 0, ins, _hist_one(full))
+    out = io._check_histology_probe("E", 0, ins, _hist_one(full), True)
     assert out == {"probe00_histology": "traced"}
 
 
@@ -307,7 +314,7 @@ def test_check_histology_probe_aligned_when_alignment_count_only():
             "extended_qc": {"alignment_count": 2},
         },
     }
-    out = io._check_histology_probe("E", 0, ins, _hist_one(full))
+    out = io._check_histology_probe("E", 0, ins, _hist_one(full), True)
     assert out == {"probe00_histology": "aligned"}
 
 
@@ -320,7 +327,7 @@ def test_check_histology_probe_resolved_wins():
             "extended_qc": {"alignment_count": 2, "alignment_resolved": True},
         },
     }
-    out = io._check_histology_probe("E", 0, ins, _hist_one(full))
+    out = io._check_histology_probe("E", 0, ins, _hist_one(full), True)
     assert out == {"probe00_histology": "resolved"}
 
 
@@ -356,6 +363,7 @@ def test_check_datasets_data_url_none_is_absent(tmp_path, monkeypatch):
     assert out["pre_passiveStims"] == io.MISSING
     assert out["pre_passiveGabor"] == io.MISSING
     assert out["post_intervalsTable"] == io.MISSING
+    assert "image_stacks" not in out
 
 
 # --- _check_image_stacks ---------------------------------------------------
